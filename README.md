@@ -14,8 +14,10 @@ A .NET 8 C# library (plus a small command-line tool) that converts karaoke files
 * **.NET 8 SDK**
 * **ffmpeg** (and ffprobe) on the `PATH`, or set `ConversionOptions.FfmpegPath`.
   On Windows: `winget install Gyan.FFmpeg`.
-* **A SoundFont (`.sf2`)** for KAR/MIDI audio, e.g. GeneralUser GS, FluidR3_GM or TimGM6mb.
-  Not needed if you supply your own backing track with `MidiAudioOverridePath`.
+* **A SoundFont (`.sf2`)** for KAR/MIDI audio. You don't have to find one yourself: if none is
+  installed, the library can download **GeneralUser GS** (~31 MB, free to use and redistribute) with
+  the user's permission. See [SoundFonts](#soundfonts). Not needed if you supply your own backing
+  track with `MidiAudioOverridePath`.
 
 NuGet dependencies: [MeltySynth](https://github.com/sinshu/meltysynth) (pure C# SoundFont synth)
 and [SkiaSharp](https://github.com/mono/SkiaSharp) (lyric text rendering).
@@ -52,6 +54,39 @@ KaraokeFormat format = KaraokeConverter.DetectFormat("song.mid"); // Kar / MidiW
 All conversions accept a `CancellationToken`. Failures are reported as `KaraokeConversionException`
 (including ffmpeg's error output).
 
+### SoundFonts
+
+When `SoundFontPath` is not set, `SoundFontLocator` looks for an `.sf2` in this order:
+
+1. `%LOCALAPPDATA%\KaraokeTools\soundfonts` (`~/.local/share/KaraokeTools/soundfonts` on Linux), where downloads go
+2. the app folder and its `soundfonts` subfolder
+3. `SoundFontLocator.AdditionalSearchFolders`
+4. common system folders (`/usr/share/sounds/sf2`, `C:\soundfonts`, `~/Library/Audio/Sounds/Banks`, ...)
+
+If nothing is found, the library calls `ConfirmSoundFontDownload`. If that returns true, it downloads
+GeneralUser GS from a pinned GitHub commit, checks its SHA-256 and saves it so later runs find it.
+If no callback is set, nothing is downloaded and you get an explanatory error.
+
+```csharp
+// WinForms: ask once, just like the ffmpeg download
+options.ConfirmSoundFontDownload = (req, ct) => Task.FromResult(
+    MessageBox.Show(this,
+        $"KAR/MIDI songs need a SoundFont to play the music.\n\n" +
+        $"Download {req.SoundFont.Name} (about {req.SoundFont.SizeMegabytes} MB) into:\n{req.Destination}\n\n" +
+        $"This only happens once.",
+        "Download SoundFont?", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes);
+
+// Or check/download up front:
+string? sf2 = await SoundFontLocator.EnsureAsync(askUser);
+```
+
+**Why GeneralUser GS?** It's a complete General MIDI/GS bank, which is what KAR and karaoke MIDI
+files are written for. It sounds noticeably better than tiny banks like TimGM6mb (6 MB) and is far
+smaller than FluidR3_GM (~140 MB) or MuseScore_General (~200+ MB). It is actively maintained and
+its licence allows free use and redistribution, including in commercial software. To use a
+different bank, set `SoundFontPath`, drop the `.sf2` in a search folder, or assign your own
+`SoundFontInfo` to `SoundFontLocator.Recommended`.
+
 ### Useful options
 
 | Option | Default | Notes |
@@ -61,7 +96,8 @@ All conversions accept a `CancellationToken`. Failures are reported as `KaraokeC
 | `AudioCodec`, `AudioBitrateKbps` | aac, 192 | |
 | `CdgScaleAlgorithm` | `neighbor` | `lanczos` for a smoother look |
 | `CdgCropBorder` | false | Show only the 288x192 safe area |
-| `SoundFontPath` | — | Required for KAR/MIDI unless `MidiAudioOverridePath` is set |
+| `SoundFontPath` | auto | Auto-detected when null; see [SoundFonts](#soundfonts) |
+| `ConfirmSoundFontDownload` | null | Callback asking permission to download GeneralUser GS |
 | `MidiAudioOverridePath` | — | Use a real backing track instead of synthesising the MIDI |
 | `LinesPerPage` | 4 | Lyric lines on screen |
 | `FontFamily` / `FontPath` / `FontSize` | Arial / — / auto | |
@@ -81,7 +117,8 @@ dotnet run --project samples/KaraokeToMp4.Cli -- "Artist - Song.mp3"
 dotnet run --project samples/KaraokeToMp4.Cli -- song.kar song.mp4 --soundfont GeneralUser.sf2 --width 1920 --height 1080
 ```
 
-Run with `--help` for all options.
+Run with `--help` for all options. For KAR/MIDI input with no SoundFont installed, the CLI asks
+before downloading GeneralUser GS (`--yes` skips the question).
 
 ## How it works
 

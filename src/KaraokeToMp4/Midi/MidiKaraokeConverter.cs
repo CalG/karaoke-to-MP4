@@ -75,15 +75,22 @@ public sealed class MidiKaraokeConverter
             }
             else
             {
-                if (string.IsNullOrEmpty(_options.SoundFontPath))
+                var soundFont = _options.SoundFontPath;
+                if (string.IsNullOrEmpty(soundFont))
+                {
+                    soundFont = await SoundFontLocator.EnsureAsync(
+                        _options.ConfirmSoundFontDownload, _options.SoundFontDownloadProgress, cancellationToken).ConfigureAwait(false);
+                }
+                if (string.IsNullOrEmpty(soundFont))
                     throw new KaraokeConversionException(
-                        "A SoundFont is required to synthesise MIDI audio. Set ConversionOptions.SoundFontPath " +
-                        "(or ConversionOptions.MidiAudioOverridePath to use a pre-rendered backing track).");
+                        "A SoundFont is required to synthesise MIDI audio and none was found. Set ConversionOptions.SoundFontPath, " +
+                        "allow a download via ConversionOptions.ConfirmSoundFontDownload (or SoundFontLocator.DownloadAsync), " +
+                        "or use ConversionOptions.MidiAudioOverridePath for a pre-rendered backing track.");
 
                 tempWav = Path.Combine(Path.GetTempPath(), $"karaoke-to-mp4-{Guid.NewGuid():N}.wav");
                 var midiFile = midiPath;
                 duration = await Task.Run(() => MidiAudioRenderer.RenderToWav(
-                    midiFile, _options.SoundFontPath, tempWav, _options.MidiSampleRate,
+                    midiFile, soundFont, tempWav, _options.MidiSampleRate,
                     _options.MidiTailSeconds, progress, cancellationToken), cancellationToken).ConfigureAwait(false);
                 audioPath = tempWav;
             }

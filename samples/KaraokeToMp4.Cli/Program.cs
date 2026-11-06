@@ -12,7 +12,8 @@ if (args.Length == 0 || args.Contains("-h") || args.Contains("--help"))
         Input may be a .cdg, an audio file with a matching .cdg, a .zip (MP3+G), a .kar, or a .mid with lyrics.
 
         Options:
-          --soundfont <file.sf2>   SoundFont used to synthesise MIDI/KAR audio (required for MIDI input)
+          --soundfont <file.sf2>   SoundFont for MIDI/KAR audio (default: auto-detect, or offer to download GeneralUser GS)
+          --yes                    Download a SoundFont without asking if none is found
           --audio <file>           Use this backing track for MIDI/KAR instead of synthesising
           --ffmpeg <path>          Path to ffmpeg (default: ffmpeg on PATH)
           --width <px>             Output width (default 1280)
@@ -31,6 +32,7 @@ if (args.Length == 0 || args.Contains("-h") || args.Contains("--help"))
 
 var options = new ConversionOptions();
 string? input = null, output = null;
+bool assumeYes = false;
 
 try
 {
@@ -53,6 +55,7 @@ try
             case "--lines": options.LinesPerPage = NextInt(); break;
             case "--title": options.Title = Next(); break;
             case "--crop-border": options.CdgCropBorder = true; break;
+            case "--yes": case "-y": assumeYes = true; break;
             case "--smooth": options.CdgScaleAlgorithm = "lanczos"; break;
             case "--font":
                 var f = Next();
@@ -82,6 +85,23 @@ if (Path.GetFullPath(output) == Path.GetFullPath(input))
 }
 
 Console.WriteLine($"{input}  [{KaraokeConverter.DetectFormat(input)}]  ->  {output}");
+
+// Ask before downloading a SoundFont (only happens for MIDI/KAR input when none is installed).
+options.ConfirmSoundFontDownload = (req, _) =>
+{
+    Console.WriteLine();
+    Console.WriteLine($"No SoundFont (.sf2) was found. MIDI/KAR audio needs one to synthesise the music.");
+    Console.WriteLine($"Download {req.SoundFont.Name} (~{req.SoundFont.SizeMegabytes} MB) to:");
+    Console.WriteLine($"  {req.Destination}");
+    Console.WriteLine($"  Licence: {req.SoundFont.License}");
+    if (assumeYes) return Task.FromResult(true);
+    if (Console.IsInputRedirected) { Console.WriteLine("(Re-run with --yes to allow the download.)"); return Task.FromResult(false); }
+    Console.Write("Download now? [y/N] ");
+    var answer = Console.ReadLine()?.Trim();
+    return Task.FromResult(string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase));
+};
+options.SoundFontDownloadProgress = new Progress<double>(f => Console.Write($"\rDownloading SoundFont {f,7:P1}   "));
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };

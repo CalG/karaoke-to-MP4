@@ -20,7 +20,7 @@ public class EndToEndTests
             "/usr/share/sounds/sf2/default-GM.sf2",
         }.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
 
-    private static ConversionOptions SmallOptions() => new()
+    internal static ConversionOptions SmallOptions() => new()
     {
         Width = 320,
         Height = 240,
@@ -95,16 +95,6 @@ public class EndToEndTests
         options.MidiAudioOverridePath = wav;
         await new KaraokeConverter(options).ConvertAsync(mid, output);
         AssertValidMp4(output, 320, 240, expectedSeconds: 4);
-    }
-
-    [Fact]
-    public async Task Midi_WithoutSoundFont_ThrowsHelpfulError()
-    {
-        using var dir = new TempDir();
-        var mid = TestFiles.WriteTemp(dir.Path, "song.mid", TestFiles.MidiWithLyrics("la"));
-        var ex = await Assert.ThrowsAsync<KaraokeConversionException>(
-            () => new KaraokeConverter(SmallOptions()).ConvertAsync(mid, dir.File("x.mp4")));
-        Assert.Contains("SoundFont", ex.Message);
     }
 
     [Fact]

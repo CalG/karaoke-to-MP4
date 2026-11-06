@@ -69,10 +69,21 @@ public sealed class ConversionOptions
     // ---- MIDI / KAR ---------------------------------------------------
 
     /// <summary>
-    /// SoundFont (.sf2) used to synthesise MIDI audio. Required for MIDI/KAR input unless
-    /// <see cref="MidiAudioOverridePath"/> is supplied.
+    /// SoundFont (.sf2) used to synthesise MIDI audio. When null, <see cref="Midi.SoundFontLocator"/>
+    /// looks for one (download folder, app folder, system folders) and, if none is found, asks
+    /// <see cref="ConfirmSoundFontDownload"/> whether to download the recommended one.
     /// </summary>
     public string? SoundFontPath { get; set; }
+
+    /// <summary>
+    /// Called when MIDI/KAR audio needs a SoundFont and none can be found. Return true to download
+    /// <see cref="Midi.SoundFontLocator.Recommended"/> (GeneralUser GS, ~31 MB). When null, no download
+    /// is attempted and the conversion fails with an explanatory error.
+    /// </summary>
+    public Func<Midi.SoundFontDownloadRequest, CancellationToken, Task<bool>>? ConfirmSoundFontDownload { get; set; }
+
+    /// <summary>Optional progress (0..1) for a SoundFont download.</summary>
+    public IProgress<double>? SoundFontDownloadProgress { get; set; }
 
     /// <summary>
     /// Optional pre-rendered backing track to use instead of synthesising the MIDI file.
