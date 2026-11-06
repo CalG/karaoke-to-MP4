@@ -7,6 +7,7 @@ namespace KaraokeToMp4.Tests;
 /// Full conversions through ffmpeg. Skipped automatically (they pass trivially) when ffmpeg isn't
 /// installed; the MIDI test also needs a SoundFont, found via KARAOKE_TEST_SOUNDFONT or common paths.
 /// </summary>
+[Collection("Tools")]
 public class EndToEndTests
 {
     private static readonly bool HasFfmpeg = CanRun("ffmpeg", "-version") && CanRun("ffprobe", "-version");

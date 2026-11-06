@@ -21,15 +21,27 @@ public sealed class ConversionOptions
     // ---- Encoder ------------------------------------------------------
 
     /// <summary>
-    /// Path to the ffmpeg executable. Defaults to "ffmpeg", i.e. whatever is on the PATH.
+    /// Path to the ffmpeg executable. When null (the default), <see cref="Video.FfmpegLocator"/> looks
+    /// for it (app folder, download folder, PATH) and, if it isn't found, asks
+    /// <see cref="ConfirmFfmpegDownload"/> whether to download it.
     /// </summary>
-    public string FfmpegPath { get; set; } = "ffmpeg";
+    public string? FfmpegPath { get; set; }
 
     /// <summary>
     /// Path to the ffprobe executable. When null it is looked up next to <see cref="FfmpegPath"/>,
     /// falling back to "ffprobe" on the PATH.
     /// </summary>
     public string? FfprobePath { get; set; }
+
+    /// <summary>
+    /// Called when ffmpeg can't be found. Return true to download it (about 80-105 MB depending on the
+    /// platform) into <see cref="Video.FfmpegLocator.DownloadFolder"/>. When null, no download is
+    /// attempted and the conversion fails with an explanatory error.
+    /// </summary>
+    public Func<Video.FfmpegDownloadRequest, CancellationToken, Task<bool>>? ConfirmFfmpegDownload { get; set; }
+
+    /// <summary>Optional progress (0..1) for an ffmpeg download.</summary>
+    public IProgress<double>? FfmpegDownloadProgress { get; set; }
 
     /// <summary>ffmpeg video codec. Default "libx264".</summary>
     public string VideoCodec { get; set; } = "libx264";
@@ -145,7 +157,5 @@ public sealed class ConversionOptions
             throw new ArgumentException("FrameRate must be between 1 and 240.");
         if (LinesPerPage <= 0)
             throw new ArgumentException("LinesPerPage must be at least 1.");
-        if (string.IsNullOrWhiteSpace(FfmpegPath))
-            throw new ArgumentException("FfmpegPath must be set.");
     }
 }

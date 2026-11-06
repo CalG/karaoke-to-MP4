@@ -31,6 +31,7 @@ internal sealed class FfmpegVideoWriter : IAsyncDisposable
     /// <param name="videoFilter">Optional -vf filter chain (e.g. scaling CDG up to the output size).</param>
     public static FfmpegVideoWriter Start(
         ConversionOptions options,
+        FfmpegTools tools,
         int frameWidth,
         int frameHeight,
         string audioPath,
@@ -76,7 +77,7 @@ internal sealed class FfmpegVideoWriter : IAsyncDisposable
 
         args.Add(outputPath);
 
-        var psi = new ProcessStartInfo(options.FfmpegPath)
+        var psi = new ProcessStartInfo(tools.FfmpegPath)
         {
             RedirectStandardInput = true,
             RedirectStandardError = true,
@@ -94,7 +95,7 @@ internal sealed class FfmpegVideoWriter : IAsyncDisposable
         catch (System.ComponentModel.Win32Exception ex)
         {
             throw new KaraokeConversionException(
-                $"Could not start ffmpeg ('{options.FfmpegPath}'). Install ffmpeg or set ConversionOptions.FfmpegPath.", ex);
+                $"Could not start ffmpeg ('{tools.FfmpegPath}'). Install ffmpeg or set ConversionOptions.FfmpegPath.", ex);
         }
 
         var writer = new FfmpegVideoWriter(process, frameWidth * frameHeight * 4);

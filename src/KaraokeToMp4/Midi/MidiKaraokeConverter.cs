@@ -61,6 +61,9 @@ public sealed class MidiKaraokeConverter
             lyrics.TitleLines.Add(Path.GetFileNameWithoutExtension(midiPath));
         }
 
+        // Sort out ffmpeg first so a missing encoder is reported before minutes of synthesis.
+        var tools = await MediaProbe.ResolveToolsAsync(_options, cancellationToken).ConfigureAwait(false);
+
         string? tempWav = null;
         try
         {
@@ -70,7 +73,7 @@ public sealed class MidiKaraokeConverter
             {
                 audioPath = _options.MidiAudioOverridePath;
                 if (!File.Exists(audioPath)) throw new FileNotFoundException("Audio override file not found.", audioPath);
-                duration = await MediaProbe.TryGetDurationAsync(_options, audioPath, cancellationToken).ConfigureAwait(false)
+                duration = await MediaProbe.TryGetDurationAsync(tools, audioPath, cancellationToken).ConfigureAwait(false)
                            ?? TimeSpan.FromSeconds(midi.DurationSeconds + _options.MidiTailSeconds);
             }
             else
@@ -101,7 +104,7 @@ public sealed class MidiKaraokeConverter
             using var renderer = new LyricFrameRenderer(_options, plan, lyrics.TitleLines);
             var frame = new byte[_options.Width * _options.Height * 4];
 
-            await using var writer = FfmpegVideoWriter.Start(_options, _options.Width, _options.Height, audioPath, outputPath, videoFilter: null);
+            await using var writer = FfmpegVideoWriter.Start(_options, tools, _options.Width, _options.Height, audioPath, outputPath, videoFilter: null);
             for (long n = 0; n < totalFrames; n++)
             {
                 cancellationToken.ThrowIfCancellationRequested();

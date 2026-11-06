@@ -13,9 +13,9 @@ if (args.Length == 0 || args.Contains("-h") || args.Contains("--help"))
 
         Options:
           --soundfont <file.sf2>   SoundFont for MIDI/KAR audio (default: auto-detect, or offer to download GeneralUser GS)
-          --yes                    Download a SoundFont without asking if none is found
+          --yes                    Download ffmpeg / a SoundFont without asking if they're missing
           --audio <file>           Use this backing track for MIDI/KAR instead of synthesising
-          --ffmpeg <path>          Path to ffmpeg (default: ffmpeg on PATH)
+          --ffmpeg <path>          Path to ffmpeg (default: auto-detect, or offer to download it)
           --width <px>             Output width (default 1280)
           --height <px>            Output height (default 720)
           --fps <n>                Frame rate (default 30)
@@ -86,21 +86,28 @@ if (Path.GetFullPath(output) == Path.GetFullPath(input))
 
 Console.WriteLine($"{input}  [{KaraokeConverter.DetectFormat(input)}]  ->  {output}");
 
-// Ask before downloading a SoundFont (only happens for MIDI/KAR input when none is installed).
-options.ConfirmSoundFontDownload = (req, _) =>
+// Ask before downloading anything (only happens when ffmpeg or a SoundFont isn't installed).
+Task<bool> AskToDownload(string what, string why, int megabytes, string destination, string? licence = null)
 {
     Console.WriteLine();
-    Console.WriteLine($"No SoundFont (.sf2) was found. MIDI/KAR audio needs one to synthesise the music.");
-    Console.WriteLine($"Download {req.SoundFont.Name} (~{req.SoundFont.SizeMegabytes} MB) to:");
-    Console.WriteLine($"  {req.Destination}");
-    Console.WriteLine($"  Licence: {req.SoundFont.License}");
+    Console.WriteLine($"{what} was not found. {why}");
+    Console.WriteLine($"Download it (~{megabytes} MB) to:");
+    Console.WriteLine($"  {destination}");
+    if (licence != null) Console.WriteLine($"  Licence: {licence}");
     if (assumeYes) return Task.FromResult(true);
     if (Console.IsInputRedirected) { Console.WriteLine("(Re-run with --yes to allow the download.)"); return Task.FromResult(false); }
     Console.Write("Download now? [y/N] ");
     var answer = Console.ReadLine()?.Trim();
     return Task.FromResult(string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) ||
                            string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase));
-};
+}
+
+options.ConfirmFfmpegDownload = (req, _) => AskToDownload(
+    "ffmpeg", "It is needed to encode the MP4.", req.Release.SizeMegabytes, req.Destination);
+options.FfmpegDownloadProgress = new Progress<double>(f => Console.Write($"\rDownloading ffmpeg {f,7:P1}   "));
+options.ConfirmSoundFontDownload = (req, _) => AskToDownload(
+    "A SoundFont (.sf2)", "MIDI/KAR audio needs one to synthesise the music.",
+    req.SoundFont.SizeMegabytes, req.Destination, req.SoundFont.License);
 options.SoundFontDownloadProgress = new Progress<double>(f => Console.Write($"\rDownloading SoundFont {f,7:P1}   "));
 
 using var cts = new CancellationTokenSource();

@@ -31,6 +31,7 @@ public sealed class CdgConverter
         if (!File.Exists(cdgPath)) throw new FileNotFoundException("CDG file not found.", cdgPath);
 
         progress?.Report(new ConversionProgress(ConversionStage.Preparing, TimeSpan.Zero, TimeSpan.Zero));
+        var tools = await MediaProbe.ResolveToolsAsync(_options, cancellationToken).ConfigureAwait(false);
 
         var decoder = CdgDecoder.FromFile(cdgPath);
         if (decoder.PacketCount == 0)
@@ -38,7 +39,7 @@ public sealed class CdgConverter
 
         // Run the video for as long as the longer of the two streams; ffmpeg's -shortest
         // then trims to the audio so the song is never cut off early or padded with silence.
-        var audioDuration = await MediaProbe.TryGetDurationAsync(_options, audioPath, cancellationToken).ConfigureAwait(false);
+        var audioDuration = await MediaProbe.TryGetDurationAsync(tools, audioPath, cancellationToken).ConfigureAwait(false);
         var duration = audioDuration is { } a && a > decoder.Duration ? a : decoder.Duration;
         long totalFrames = (long)Math.Ceiling(duration.TotalSeconds * _options.FrameRate);
 
@@ -51,7 +52,7 @@ public sealed class CdgConverter
             $"scale={_options.Width}:{_options.Height}:force_original_aspect_ratio=decrease:flags={_options.CdgScaleAlgorithm}," +
             $"pad={_options.Width}:{_options.Height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1";
 
-        await using var writer = FfmpegVideoWriter.Start(_options, frameW, frameH, audioPath, outputPath, filter);
+        await using var writer = FfmpegVideoWriter.Start(_options, tools, frameW, frameH, audioPath, outputPath, filter);
         for (long n = 0; n < totalFrames; n++)
         {
             cancellationToken.ThrowIfCancellationRequested();

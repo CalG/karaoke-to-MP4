@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-
 namespace KaraokeToMp4.Midi;
 
 /// <summary>Describes a SoundFont that <see cref="SoundFontLocator"/> can download.</summary>
@@ -115,53 +113,17 @@ public static class SoundFontLocator
         HttpClient? httpClient = null)
     {
         soundFont ??= Recommended;
-        Directory.CreateDirectory(DownloadFolder);
         var destination = Path.Combine(DownloadFolder, soundFont.FileName);
-        var partial = destination + ".part";
-
-        var client = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-        try
-        {
-            using var response = await client.GetAsync(soundFont.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                .ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            long total = response.Content.Headers.ContentLength ?? soundFont.SizeBytes;
-
-            using var sha = SHA256.Create();
-            await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
-            await using (var output = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
-            {
-                var buffer = new byte[1 << 16];
-                long read = 0;
-                int n;
-                while ((n = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
-                {
-                    await output.WriteAsync(buffer.AsMemory(0, n), cancellationToken).ConfigureAwait(false);
-                    sha.TransformBlock(buffer, 0, n, null, 0);
-                    read += n;
-                    if (total > 0) downloadProgress?.Report(Math.Min(1.0, (double)read / total));
-                }
-            }
-            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-
-            var actual = Convert.ToHexString(sha.Hash!).ToLowerInvariant();
-            if (soundFont.Sha256 != null && !string.Equals(actual, soundFont.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new KaraokeConversionException(
-                    $"Downloaded SoundFont '{soundFont.Name}' failed its checksum (expected {soundFont.Sha256}, got {actual}).");
-
-            File.Move(partial, destination, overwrite: true);
-            downloadProgress?.Report(1.0);
-            return destination;
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new KaraokeConversionException($"Could not download SoundFont '{soundFont.Name}': {ex.Message}", ex);
-        }
-        finally
-        {
-            if (httpClient == null) client.Dispose();
-            try { if (File.Exists(partial)) File.Delete(partial); } catch { /* best effort */ }
-        }
+        long total = soundFont.SizeBytes;
+        await Downloads.VerifiedDownloader.DownloadAsync(
+            new Downloads.DownloadAsset(soundFont.Url, soundFont.Sha256, soundFont.SizeBytes),
+            destination,
+            $"SoundFont '{soundFont.Name}'",
+            read => { if (total > 0) downloadProgress?.Report(Math.Min(1.0, (double)read / total)); },
+            httpClient,
+            cancellationToken).ConfigureAwait(false);
+        downloadProgress?.Report(1.0);
+        return destination;
     }
 
     private static IEnumerable<string> CandidateFolders()

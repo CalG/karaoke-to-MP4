@@ -8,6 +8,7 @@ namespace KaraokeToMp4.Tests;
 /// SoundFontLocator has static configuration, so these tests all live in one class (xUnit runs the
 /// tests of a class one at a time) and restore the settings afterwards.
 /// </summary>
+[Collection("Tools")]
 public sealed class SoundFontLocatorTests : IDisposable
 {
     private readonly TempDir _dir = new();
@@ -148,7 +149,12 @@ public sealed class SoundFontLocatorTests : IDisposable
     {
         var mid = TestFiles.WriteTemp(_dir.Path, "song.mid", TestFiles.MidiWithLyrics("la"));
         var ex = await Assert.ThrowsAsync<KaraokeConversionException>(
-            () => new KaraokeConverter(EndToEndTests.SmallOptions()).ConvertAsync(mid, _dir.File("x.mp4")));
+            () =>
+            {
+                var options = EndToEndTests.SmallOptions();
+                options.FfmpegPath = "ffmpeg"; // don't depend on ffmpeg being installed for this check
+                return new KaraokeConverter(options).ConvertAsync(mid, _dir.File("x.mp4"));
+            });
         Assert.Contains("SoundFont", ex.Message);
     }
 
