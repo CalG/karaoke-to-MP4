@@ -282,7 +282,7 @@ dotnet run --project samples/KaraokeToMp4.WinForms
    * **Bad but repairable**, e.g. a scratched-disc CDG whose damaged packets the error-correction data
      can fix, or a MIDI/KAR file with malformed bytes that can be cleaned up.
    * **Cannot repair**, e.g. a file that was cut off (part of the song is missing), an empty or unreadable file.
-   * **Only music**: an MP3 (or other audio) in a karaoke folder without a matching .cdg, an empty .cdg,
+   * **Only music**: an MP3 (or other audio file) without a matching .cdg (missing lyrics), an empty .cdg,
      a .zip with audio but no .cdg, or a plain MIDI file with no lyrics.
    * **Only lyrics**: a .cdg without an audio file (or with an empty one), a .zip with a .cdg but no
      audio, or a KAR/MIDI file with lyrics but no notes.
@@ -300,7 +300,7 @@ What is checked:
 | `.cdg` + audio | audio present and not empty; every graphics packet checked with the CD+G error-correction data |
 | `.zip` (MP3+G) | the same, inside the zip (repairs rewrite the zip) |
 | `.kar` / `.mid` | valid MIDI, has lyrics, not cut off, no malformed events |
-| audio in a karaoke folder | has a matching `.cdg` |
+| audio files (.mp3, .ogg, .wav, ...) | has a matching `.cdg` (otherwise listed as missing lyrics) |
 
 The same checks are available to other programs through `KaraokeToMp4.Health.SongHealthChecker`
 (`FindSongs`, `Check`, `Repair`).

@@ -189,17 +189,18 @@ public class SongHealthCheckerTests
     }
 
     [Fact]
-    public void FindSongs_ListsKaraokeFilesAndOrphanedAudio()
+    public void FindSongs_ListsKaraokeFilesAndEveryAudioFileWithoutLyrics()
     {
         using var dir = new TempDir();
         Directory.CreateDirectory(dir.File("sub"));
         Pair(dir, "a", CdgWithParity());
-        File.WriteAllBytes(dir.File("orphan.mp3"), new byte[10]);              // no .cdg, in a karaoke folder
+        File.WriteAllBytes(dir.File("orphan.mp3"), new byte[10]);              // no .cdg
         TestFiles.WriteTemp(dir.File("sub"), "b.kar", TestFiles.Kar("x"));
-        File.WriteAllBytes(dir.File("sub") + "/music.mp3", new byte[10]);       // folder without .cdg: ordinary music
+        File.WriteAllBytes(Path.Combine(dir.File("sub"), "music.mp3"), new byte[10]); // also flagged, even with no .cdg files nearby
 
         var names = SongHealthChecker.FindSongs(new[] { dir.Path }).Select(Path.GetFileName).ToList();
-        Assert.Equal(new[] { "a.cdg", "orphan.mp3", "b.kar" }.OrderBy(x => x), names.OrderBy(x => x));
+        Assert.Equal(new[] { "a.cdg", "orphan.mp3", "b.kar", "music.mp3" }.OrderBy(x => x), names.OrderBy(x => x));
+        Assert.DoesNotContain("a.mp3", names); // audio that has its .cdg is part of that song, not listed separately
 
         var top = SongHealthChecker.FindSongs(new[] { dir.Path }, includeSubfolders: false).Select(Path.GetFileName).ToList();
         Assert.DoesNotContain("b.kar", top);

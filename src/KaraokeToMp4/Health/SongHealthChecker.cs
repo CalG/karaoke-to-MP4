@@ -52,9 +52,9 @@ public static class SongHealthChecker
     private static readonly string[] MidiExtensions = { ".kar", ".mid", ".midi" };
 
     /// <summary>
-    /// Lists the songs in <paramref name="folders"/>: each .cdg (with its audio), each .zip that holds a
-    /// .cdg, each .kar/.mid, and audio files that sit in a karaoke folder without a matching .cdg.
-    /// Unreadable folders are skipped.
+    /// Lists the songs in <paramref name="folders"/>: each .cdg (with its audio), each .zip, each .kar/.mid,
+    /// and every audio file without a matching .cdg (music that is missing its lyrics). Unreadable folders
+    /// are skipped.
     /// </summary>
     public static IEnumerable<string> FindSongs(IEnumerable<string> folders, bool includeSubfolders = true)
     {
@@ -80,8 +80,8 @@ public static class SongHealthChecker
                 {
                     var ext = Ext(f);
                     bool song = ext == ".cdg" || ext == ".zip" || MidiExtensions.Contains(ext) ||
-                                // Audio without graphics, in a folder that has karaoke tracks: likely a lost .cdg.
-                                (CdgConverter.AudioExtensions.Contains(ext) && cdgBases.Count > 0 &&
+                                // Audio without graphics: music that is missing its lyrics.
+                                (CdgConverter.AudioExtensions.Contains(ext) &&
                                  !cdgBases.Contains(System.IO.Path.GetFileNameWithoutExtension(f)));
                     if (song && seen.Add(f)) yield return f;
                 }
@@ -99,7 +99,7 @@ public static class SongHealthChecker
             if (ext == ".zip") return CheckZip(path);
             if (MidiExtensions.Contains(ext)) return CheckMidi(path);
             if (CdgConverter.AudioExtensions.Contains(ext))
-                return Result(path, "Audio", SongHealthStatus.OnlyMusic, "No matching .cdg graphics file (music only).");
+                return Result(path, "Audio", SongHealthStatus.OnlyMusic, "Missing lyrics: no matching .cdg file.");
             return Result(path, "Unknown", SongHealthStatus.CannotRepair, "Not a karaoke file type.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
