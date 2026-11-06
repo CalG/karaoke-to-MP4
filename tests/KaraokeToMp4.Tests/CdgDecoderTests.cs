@@ -142,3 +142,37 @@ public class CdgDecoderTests
         Assert.Equal(0, d.Pixels[0]);
     }
 }
+
+public class CdgSubcodeBitTests
+{
+    /// <summary>
+    /// The top two bits of every subcode byte belong to the P/Q channels, not CD+G. Some discs (e.g. Music
+    /// Maestro) leave them set; a decoder must mask command, instruction and data with 0x3F.
+    /// </summary>
+    [Fact]
+    public void JunkInTopTwoBits_DrawsExactlyLikeACleanPacket()
+    {
+        var clean = TestFiles.Concat(new[]
+        {
+            TestFiles.LoadColors(true, (0, 0, 0), (15, 15, 15), (15, 0, 0)),
+            TestFiles.MemoryPreset(2),
+            TestFiles.Tile(0, 1, 3, 4, 0b101101),
+            TestFiles.Tile(1, 2, 3, 4, 0b110011, xor: true),
+        });
+        var noisy = (byte[])clean.Clone();
+        var rnd = new Random(7);
+        for (int i = 0; i < noisy.Length; i++) noisy[i] |= (byte)(rnd.Next(4) << 6);
+
+        var a = new KaraokeToMp4.Cdg.CdgDecoder(clean);
+        var b = new KaraokeToMp4.Cdg.CdgDecoder(noisy);
+        a.AdvanceToPacket(4);
+        b.AdvanceToPacket(4);
+
+        var fa = new byte[KaraokeToMp4.Cdg.CdgDecoder.Width * KaraokeToMp4.Cdg.CdgDecoder.Height * 4];
+        var fb = new byte[fa.Length];
+        a.RenderBgra(fa);
+        b.RenderBgra(fb);
+        Assert.Equal(fa, fb);
+        Assert.Equal(a.Palette.ToArray(), b.Palette.ToArray());
+    }
+}
