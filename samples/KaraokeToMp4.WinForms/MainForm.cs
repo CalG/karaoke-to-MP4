@@ -294,6 +294,13 @@ internal sealed class MainForm : Form
     /// <summary>Reports damaged/truncated MIDI files, which still convert but may stop early.</summary>
     private static string CheckFile(string path, KaraokeFormat format)
     {
+        if (format == KaraokeFormat.Mp3Cdg)
+        {
+            var cdg = path.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase) ? path : KaraokeToMp4.Cdg.CdgConverter.FindCdgForAudio(path);
+            if (cdg == null) return "OK"; // .zip bundles are checked during conversion
+            try { return KaraokeToMp4.Cdg.CdgInspector.Inspect(cdg).Summary; }
+            catch (Exception ex) { return "Unreadable - " + ex.Message; }
+        }
         if (format is not (KaraokeFormat.Kar or KaraokeFormat.MidiWithLyrics)) return "OK";
         try
         {

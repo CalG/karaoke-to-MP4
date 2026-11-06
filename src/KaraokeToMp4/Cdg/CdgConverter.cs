@@ -36,7 +36,14 @@ public sealed class CdgConverter
         songInfo ??= await Metadata.SongInfoReader.FromAudioAsync(audioPath, tools, cancellationToken).ConfigureAwait(false);
         if (!_options.IncludeArtist) songInfo = songInfo.WithoutArtist();
 
-        var decoder = CdgDecoder.FromFile(cdgPath);
+        var cdgData = await File.ReadAllBytesAsync(cdgPath, cancellationToken).ConfigureAwait(false);
+        if (_options.CdgErrorCorrection)
+        {
+            var report = CdgInspector.RepairInPlace(cdgData);
+            if (!report.IsClean)
+                _options.OnWarning?.Invoke($"{Path.GetFileName(cdgPath)}: {report.Summary}");
+        }
+        var decoder = new CdgDecoder(cdgData);
         if (decoder.PacketCount == 0)
             throw new KaraokeConversionException($"'{cdgPath}' contains no CDG packets.");
 

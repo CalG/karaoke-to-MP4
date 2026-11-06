@@ -98,6 +98,13 @@ public sealed class ConversionOptions
     /// </summary>
     public bool CdgCropBorder { get; set; }
 
+    /// <summary>
+    /// Use the CD+G error-correction data to repair damaged packets (scratched-disc rips) before
+    /// rendering, and skip packets that can't be repaired. Default true. Has no effect on rips whose
+    /// error-correction bytes were stripped.
+    /// </summary>
+    public bool CdgErrorCorrection { get; set; } = true;
+
     // ---- MIDI / KAR ---------------------------------------------------
 
     /// <summary>

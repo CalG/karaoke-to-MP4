@@ -26,6 +26,7 @@ if (args.Length == 0 || args.Contains("-h") || args.Contains("--help"))
           --title <text>           Title card text for MIDI/KAR
           --crop-border            Hide the CDG border area
           --smooth                 Smooth (lanczos) CDG upscaling instead of blocky pixels
+          --no-cdg-repair          Don't use the CD+G error-correction data to repair damaged packets
           --keep-name              Don't append artist/title to the output name
           --title-only             Use only the song title (no artist) in the name, tags and title card
           --no-metadata            Don't write title/artist tags into the MP4
@@ -65,6 +66,7 @@ try
             case "--crop-border": options.CdgCropBorder = true; break;
             case "--yes": case "-y": assumeYes = true; break;
             case "--smooth": options.CdgScaleAlgorithm = "lanczos"; break;
+            case "--no-cdg-repair": options.CdgErrorCorrection = false; break;
             case "--keep-name": keepName = true; break;
             case "--title-only": options.IncludeArtist = false; break;
             case "--no-metadata": options.WriteMetadata = false; break;
@@ -104,6 +106,22 @@ if (songInfo.RawArtist != null && songInfo.RawArtist != songInfo.Artist)
 if (infoOnly)
 {
     var fmt = KaraokeConverter.DetectFormat(input);
+    var cdgPath = fmt != KaraokeFormat.Mp3Cdg ? null
+        : input.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase) ? input
+        : KaraokeToMp4.Cdg.CdgConverter.FindCdgForAudio(input);
+    if (cdgPath != null)
+    {
+        var report = KaraokeToMp4.Cdg.CdgInspector.Inspect(cdgPath);
+        Console.WriteLine();
+        Console.WriteLine($"CDG check: {report.Summary}");
+        Console.WriteLine($"  {report.Packets:N0} packets ({report.Duration:m\\:ss}), {report.GraphicsPackets:N0} with graphics, " +
+                          $"error-correction data: {(report.HasParity ? "yes" : "no")}");
+        if (report.DamageTimes.Count > 0)
+        {
+            var byTime = report.DamageTimes.GroupBy(t => (int)t.TotalSeconds).Select(g => $"{g.Key / 60}:{g.Key % 60:00}" + (g.Count() > 1 ? $"x{g.Count()}" : ""));
+            Console.WriteLine($"  damaged at: {string.Join(", ", byTime.Take(40))}{(report.DamageTimes.Count > 40 ? ", ..." : "")}");
+        }
+    }
     if (fmt is KaraokeFormat.Kar or KaraokeFormat.MidiWithLyrics)
     {
         // Show the text the title/artist were picked from, to help diagnose unusual files.

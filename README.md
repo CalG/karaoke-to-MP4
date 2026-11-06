@@ -103,6 +103,27 @@ string mp4 = await converter.ConvertNextToSourceAsync("SC8127-05.mp3"); // retur
 The CLI's `--info` option prints what was found (and, for MIDI files, the raw text events) without
 converting. `--keep-name` and `--no-metadata` turn the two features off.
 
+### Damaged CDG files (scratched-disc rips)
+
+Every CD+G packet carries Reed-Solomon error-correction data that can locate and fix up to two damaged
+bytes. A rip from a scratched disc often has a few hundred damaged packets. Because many discs draw
+with XOR tiles, each one leaves a stray block on screen until the next screen clear, so the garbage
+builds up as the song plays.
+
+`CdgInspector` checks a file and `CdgErrorCorrection` (on by default) repairs it before rendering.
+Packets too damaged to repair are skipped instead of drawn. Some rippers strip the error-correction
+bytes; such files are reported as "can't be checked" and left unchanged.
+
+```bash
+karaoke2mp4 "song.cdg" --info
+#  CDG check: 198 damaged packets (repaired automatically).
+#  damaged at: 0:00, 0:03, 0:04x2, ...
+```
+
+The Windows app shows the same result on its *File check* line. Use `--no-cdg-repair` to see a file
+exactly as stored. Packets with non-standard instruction codes that pass the error check (some
+producers use them) are reported but not treated as damage.
+
 ### Damaged files
 
 Many KAR collections contain truncated files (often cut at exactly 32 KB) or files with garbage at
