@@ -485,3 +485,6 @@ $RECYCLE.BIN/
 
 # Private copyrighted test files (see RealMediaTests)
 test-media/
+
+# Test fixtures are small synthetic archives and must be committed.
+!tests/KaraokeToMp4.Tests/Fixtures/**
