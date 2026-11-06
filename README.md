@@ -66,6 +66,23 @@ The title and artist are read from the file's own data:
 
 Copyright notices, sequencer credits, web addresses and generic names ("Words", "Untitled", ...) are skipped.
 
+**Cleanup.** Karaoke files often pack extra text into these fields, so `SongInfoCleaner` reduces them
+to the song name and the original performing artist:
+
+| Raw text in the file | Used |
+|---|---|
+| `Crazy (Karaoke Version)` | Crazy |
+| `In the style of Patsy Cline - Words & Music by Willie Nelson (c) 1961` | Patsy Cline |
+| `Ed Sheeran feat. Beyoncé` | Ed Sheeran |
+| `Sound Choice Karaoke` (a karaoke label) | *(no artist)* |
+
+If what's left still doesn't look like a name (too long, a credit, a karaoke label), no artist is
+used at all, because a wrong artist in a file name is worse than none. The original text is kept in
+`SongInfo.RawTitle` / `RawArtist`.
+
+**Title only.** Set `IncludeArtist = false` (CLI `--title-only`, or untick *Include artist* in the
+Windows app) to leave the artist out of the file name, MP4 tags and title screen.
+
 * **MP4 metadata:** title, artist and `genre=Karaoke` are written into the MP4
   (`WriteMetadata`, `MetadataGenre`).
 * **Output name:** `SuggestOutputPathAsync` / `ConvertNextToSourceAsync` keep the source name and append the
@@ -194,7 +211,9 @@ before downloading it (`--yes` skips the question).
 2. Click **Convert to MP4**. The video is written **next to the source file** with the same name,
    plus the artist/title from the file if the name doesn't already contain them, e.g.
    `C:\Karaoke\SC8127-05.mp3` becomes `C:\Karaoke\SC8127-05 - The Beatles - Yesterday.mp4`.
-   The detected song and artist are shown before converting and written into the MP4's metadata.
+   The *Song details* box lists each field on its own line: Format, Title, Artist, where they were
+   found, the raw text from the file, and the Output path. Untick *Include artist* to use the song
+   title only.
    You're asked before an existing file is replaced.
 3. A progress bar shows downloading, synthesis and encoding. **Cancel** stops the conversion, and
    **Open Folder** shows the finished MP4 in Explorer.

@@ -17,8 +17,21 @@ internal sealed class MainForm : Form
 
     private readonly TextBox _fileBox = new() { Dock = DockStyle.Fill, ReadOnly = true };
     private readonly Button _browseButton = new() { Text = "Browse...", AutoSize = true };
-    private readonly Label _formatLabel = new() { AutoSize = true, Text = "Format: -" };
-    private readonly Label _outputLabel = new() { AutoSize = true, Text = "Output: -" };
+    // Song details, one field per line (tag on the left, value on the right). Values are read-only
+    // text boxes so they can be selected and copied.
+    private readonly TextBox _formatValue = ValueBox();
+    private readonly TextBox _titleValue = ValueBox();
+    private readonly TextBox _artistValue = ValueBox();
+    private readonly TextBox _sourceValue = ValueBox();
+    private readonly TextBox _rawTitleValue = ValueBox();
+    private readonly TextBox _rawArtistValue = ValueBox();
+    private readonly TextBox _outputValue = ValueBox();
+    private readonly CheckBox _includeArtistBox = new()
+    {
+        Text = "Include artist in file name, MP4 tags and title screen",
+        Checked = true,
+        AutoSize = true,
+    };
     private readonly Button _convertButton = new() { Text = "Convert to MP4", AutoSize = true, Enabled = false };
     private readonly Button _cancelButton = new() { Text = "Cancel", AutoSize = true, Enabled = false };
     private readonly Button _openFolderButton = new() { Text = "Open Folder", AutoSize = true, Enabled = false };
@@ -31,9 +44,9 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "Karaoke to MP4";
-        Width = 720;
-        Height = 260;
-        MinimumSize = new Size(560, 260);
+        Width = 760;
+        Height = 470;
+        MinimumSize = new Size(600, 470);
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true;
 
@@ -49,10 +62,30 @@ internal sealed class MainForm : Form
 
         layout.Controls.Add(_fileBox, 0, 0);
         layout.Controls.Add(_browseButton, 1, 0);
-        layout.Controls.Add(_formatLabel, 0, 1);
-        layout.SetColumnSpan(_formatLabel, 2);
-        layout.Controls.Add(_outputLabel, 0, 2);
-        layout.SetColumnSpan(_outputLabel, 2);
+
+        var details = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Padding = new Padding(6),
+        };
+        details.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        AddField(details, "Format:", _formatValue);
+        AddField(details, "Title:", _titleValue);
+        AddField(details, "Artist:", _artistValue);
+        AddField(details, "Found in:", _sourceValue);
+        AddField(details, "Raw title:", _rawTitleValue);
+        AddField(details, "Raw artist:", _rawArtistValue);
+        AddField(details, "Output:", _outputValue);
+        details.Controls.Add(_includeArtistBox, 1, details.RowCount++);
+
+        var group = new GroupBox { Text = "Song details", Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(6) };
+        group.Controls.Add(details);
+        layout.Controls.Add(group, 0, 1);
+        layout.SetColumnSpan(group, 2);
+        ClearDetails();
 
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 8) };
         buttons.Controls.AddRange(new Control[] { _convertButton, _cancelButton, _openFolderButton });
@@ -69,6 +102,7 @@ internal sealed class MainForm : Form
         _convertButton.Click += async (_, _) => await ConvertAsync();
         _cancelButton.Click += (_, _) => _cts?.Cancel();
         _openFolderButton.Click += (_, _) => OpenOutputFolder();
+        _includeArtistBox.CheckedChanged += (_, _) => ShowSongInfo();
 
         DragEnter += (_, e) =>
         {
@@ -89,7 +123,57 @@ internal sealed class MainForm : Form
         };
     }
 
-    private SongInfo _songInfo = SongInfo.Empty;
+    /// <summary>Everything read from the file, including the artist.</summary>
+    private SongInfo _fileInfo = SongInfo.Empty;
+
+    /// <summary>What will actually be used, honouring the "Include artist" box.</summary>
+    private SongInfo _songInfo => _includeArtistBox.Checked ? _fileInfo : _fileInfo.WithoutArtist();
+
+    private static TextBox ValueBox() => new()
+    {
+        ReadOnly = true,
+        BorderStyle = BorderStyle.None,
+        Dock = DockStyle.Fill,
+        TabStop = false,
+        Margin = new Padding(3, 4, 3, 4),
+    };
+
+    private static void AddField(TableLayoutPanel table, string tag, TextBox value)
+    {
+        int row = table.RowCount++;
+        table.Controls.Add(new Label
+        {
+            Text = tag,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Font = new Font(SystemFonts.MessageBoxFont ?? DefaultFont, FontStyle.Bold),
+            Margin = new Padding(3, 4, 12, 4),
+        }, 0, row);
+        value.BackColor = SystemColors.Control;
+        table.Controls.Add(value, 1, row);
+    }
+
+    private void ClearDetails()
+    {
+        foreach (var box in new[] { _formatValue, _titleValue, _artistValue, _sourceValue, _rawTitleValue, _rawArtistValue, _outputValue })
+            box.Text = "-";
+    }
+
+    /// <summary>Fills the Title/Artist/Found in/Raw/Output fields from the current file.</summary>
+    private void ShowSongInfo()
+    {
+        var path = _fileBox.Text;
+        if (string.IsNullOrEmpty(path) || KaraokeConverter.DetectFormat(path) == KaraokeFormat.Unknown) return;
+
+        var info = _songInfo;
+        _titleValue.Text = info.Title ?? "(not found)";
+        _artistValue.Text = info.Artist
+                            ?? (!_includeArtistBox.Checked && _fileInfo.HasArtist ? $"(not used: {_fileInfo.Artist})" : "(not found)");
+        _sourceValue.Text = _fileInfo.Source ?? "-";
+        _rawTitleValue.Text = _fileInfo.RawTitle ?? _fileInfo.Title ?? "-";
+        _rawArtistValue.Text = _fileInfo.RawArtist ?? _fileInfo.Artist ?? "-";
+        _outputValue.Text = info.SuggestOutputPath(path);
+    }
 
     private void Browse()
     {
@@ -112,7 +196,8 @@ internal sealed class MainForm : Form
         _progressBar.Value = 0;
 
         var format = KaraokeConverter.DetectFormat(path);
-        _formatLabel.Text = "Format: " + format switch
+        ClearDetails();
+        _formatValue.Text = format switch
         {
             KaraokeFormat.Mp3Cdg => "MP3 + CDG",
             KaraokeFormat.Kar => "KAR (karaoke MIDI)",
@@ -122,10 +207,8 @@ internal sealed class MainForm : Form
         bool ok = format != KaraokeFormat.Unknown;
         // Title/artist come from the file's own data (KAR @T, MIDI text, ID3 tags). They're appended to
         // the output name when missing from it, and written into the MP4's metadata.
-        _songInfo = ok ? ReadSongInfo(path) : SongInfo.Empty;
-        if (ok && !_songInfo.IsEmpty)
-            _formatLabel.Text += $"    Song: {_songInfo.Title ?? "?"}  /  Artist: {_songInfo.Artist ?? "?"}";
-        _outputLabel.Text = ok ? "Output: " + _songInfo.SuggestOutputPath(path) : "Output: -";
+        _fileInfo = ok ? ReadSongInfo(path) : SongInfo.Empty;
+        ShowSongInfo();
         _convertButton.Enabled = ok;
         SetStatus(ok ? "Ready." : "This file can't be converted.");
     }
@@ -144,6 +227,7 @@ internal sealed class MainForm : Form
 
         var options = new ConversionOptions
         {
+            IncludeArtist = _includeArtistBox.Checked,
             ConfirmFfmpegDownload = (req, _) => AskAsync(
                 "Converting to MP4 needs ffmpeg, which wasn't found.\n\n" +
                 $"Download it now (about {req.Release.SizeMegabytes} MB) into:\n{req.Destination}\n\n" +
@@ -234,6 +318,7 @@ internal sealed class MainForm : Form
     private void SetBusy(bool busy)
     {
         _browseButton.Enabled = !busy;
+        _includeArtistBox.Enabled = !busy;
         _convertButton.Enabled = !busy && KaraokeConverter.DetectFormat(_fileBox.Text) != KaraokeFormat.Unknown;
         _cancelButton.Enabled = busy;
         UseWaitCursor = busy;

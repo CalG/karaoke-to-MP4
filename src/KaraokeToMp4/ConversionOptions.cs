@@ -66,6 +66,12 @@ public sealed class ConversionOptions
     /// </summary>
     public bool WriteMetadata { get; set; } = true;
 
+    /// <summary>
+    /// Use the artist (cleaned down to the performing artist) in the output file name, MP4 metadata and
+    /// title card. Set false to use the song title only. Default true.
+    /// </summary>
+    public bool IncludeArtist { get; set; } = true;
+
     /// <summary>Genre tag written to the MP4 (null or empty to omit). Default "Karaoke".</summary>
     public string? MetadataGenre { get; set; } = "Karaoke";
 

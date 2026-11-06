@@ -34,6 +34,7 @@ public sealed class CdgConverter
         progress?.Report(new ConversionProgress(ConversionStage.Preparing, TimeSpan.Zero, TimeSpan.Zero));
         var tools = await MediaProbe.ResolveToolsAsync(_options, cancellationToken).ConfigureAwait(false);
         songInfo ??= await Metadata.SongInfoReader.FromAudioAsync(audioPath, tools, cancellationToken).ConfigureAwait(false);
+        if (!_options.IncludeArtist) songInfo = songInfo.WithoutArtist();
 
         var decoder = CdgDecoder.FromFile(cdgPath);
         if (decoder.PacketCount == 0)

@@ -7,8 +7,13 @@ namespace KaraokeToMp4;
 /// <param name="Title">Song title, or null if the file doesn't say.</param>
 /// <param name="Artist">Artist, or null if the file doesn't say.</param>
 /// <param name="Source">Where the values came from (e.g. "KAR @T tags", "ID3 tags"), for display/debugging.</param>
-public sealed record SongInfo(string? Title, string? Artist, string? Source = null)
+/// <param name="RawTitle">The title text exactly as found in the file, before cleaning.</param>
+/// <param name="RawArtist">The artist text exactly as found in the file, before cleaning.</param>
+public sealed record SongInfo(string? Title, string? Artist, string? Source = null, string? RawTitle = null, string? RawArtist = null)
 {
+    /// <summary>The same info without the artist (for "song title only" naming/metadata).</summary>
+    public SongInfo WithoutArtist() => this with { Artist = null };
+
     public static SongInfo Empty { get; } = new(null, null);
 
     public bool HasTitle => !string.IsNullOrWhiteSpace(Title);

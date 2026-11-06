@@ -53,6 +53,7 @@ public sealed class MidiKaraokeConverter
             throw new KaraokeConversionException($"'{midiPath}' does not contain any lyrics.");
 
         songInfo ??= Metadata.SongInfoReader.FromMidi(midi);
+        if (!_options.IncludeArtist) songInfo = songInfo.WithoutArtist();
         if (!string.IsNullOrWhiteSpace(_options.Title))
         {
             lyrics.TitleLines.Clear();

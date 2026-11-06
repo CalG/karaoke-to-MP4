@@ -75,7 +75,8 @@ public sealed class KaraokeConverter
     /// sequence name, or the MP3's ID3 tags (other audio formats need ffprobe). Never downloads anything;
     /// returns <see cref="SongInfo.Empty"/> when nothing usable is found.
     /// </summary>
-    public Task<SongInfo> ReadSongInfoAsync(string inputPath, CancellationToken cancellationToken = default)
+    /// <remarks>The artist is left out when <see cref="ConversionOptions.IncludeArtist"/> is false.</remarks>
+    public async Task<SongInfo> ReadSongInfoAsync(string inputPath, CancellationToken cancellationToken = default)
     {
         FfmpegTools? tools = null;
         if (!string.IsNullOrWhiteSpace(_options.FfmpegPath))
@@ -86,7 +87,8 @@ public sealed class KaraokeConverter
             tools = new FfmpegTools(_options.FfmpegPath, probe);
         }
         tools ??= FfmpegLocator.TryLocate();
-        return SongInfoReader.ReadAsync(inputPath, tools, cancellationToken);
+        var info = await SongInfoReader.ReadAsync(inputPath, tools, cancellationToken).ConfigureAwait(false);
+        return _options.IncludeArtist ? info : info.WithoutArtist();
     }
 
     /// <summary>

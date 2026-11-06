@@ -27,6 +27,7 @@ if (args.Length == 0 || args.Contains("-h") || args.Contains("--help"))
           --crop-border            Hide the CDG border area
           --smooth                 Smooth (lanczos) CDG upscaling instead of blocky pixels
           --keep-name              Don't append artist/title to the output name
+          --title-only             Use only the song title (no artist) in the name, tags and title card
           --no-metadata            Don't write title/artist tags into the MP4
           --info                   Only show the song title/artist found in the file (and, for MIDI,
                                    the raw text events) without converting
@@ -65,6 +66,7 @@ try
             case "--yes": case "-y": assumeYes = true; break;
             case "--smooth": options.CdgScaleAlgorithm = "lanczos"; break;
             case "--keep-name": keepName = true; break;
+            case "--title-only": options.IncludeArtist = false; break;
             case "--no-metadata": options.WriteMetadata = false; break;
             case "--info": infoOnly = true; break;
             case "--font":
@@ -92,7 +94,12 @@ if (!File.Exists(input)) { Console.Error.WriteLine($"File not found: {input}"); 
 var converter = new KaraokeConverter(options);
 var songInfo = await converter.ReadSongInfoAsync(input);
 Console.WriteLine($"Title:  {songInfo.Title ?? "(not found)"}");
-Console.WriteLine($"Artist: {songInfo.Artist ?? "(not found)"}" + (songInfo.Source != null ? $"   [from {songInfo.Source}]" : ""));
+Console.WriteLine($"Artist: {songInfo.Artist ?? (options.IncludeArtist ? "(not found)" : "(not used: --title-only)")}" +
+                  (songInfo.Source != null ? $"   [from {songInfo.Source}]" : ""));
+if (songInfo.RawTitle != null && songInfo.RawTitle != songInfo.Title)
+    Console.WriteLine($"  raw title:  {songInfo.RawTitle}");
+if (songInfo.RawArtist != null && songInfo.RawArtist != songInfo.Artist)
+    Console.WriteLine($"  raw artist: {songInfo.RawArtist}");
 
 if (infoOnly)
 {

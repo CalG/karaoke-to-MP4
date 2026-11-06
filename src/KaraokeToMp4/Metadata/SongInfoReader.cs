@@ -34,6 +34,8 @@ public static class SongInfoReader
     /// in order title then artist, skipping copyright/credit lines.</item>
     /// <item>Fallback for the title: the sequence name of the first track.</item>
     /// </list>
+    /// The values are cleaned with <see cref="SongInfoCleaner"/>; if the line after the title doesn't
+    /// clean up to a plausible artist, the following lines are tried.
     /// </remarks>
     public static SongInfo FromMidi(StandardMidiFile midi)
     {
@@ -47,12 +49,8 @@ public static class SongInfoReader
             .Select(t => t.Text[2..].Trim())
             .Where(t => t.Length > 0)
             .ToList();
-        if (karTitles.Count > 0)
-        {
-            var usable = karTitles.Where(IsUsable).ToList();
-            if (usable.Count > 0)
-                return new SongInfo(usable[0], usable.Count > 1 ? usable[1] : null, "KAR @T tags");
-        }
+        var fromKar = Pick(karTitles, "KAR @T tags");
+        if (fromKar != null) return fromKar;
 
         // Header text before the first sung syllable.
         var lyricTicks = midi.Events.Where(e => e.IsMeta && e.MetaType == StandardMidiFile.MetaLyric).Select(e => e.Tick).ToList();
@@ -62,18 +60,43 @@ public static class SongInfoReader
             var header = texts
                 .Where(t => t.Tick < firstLyric || (t.Tick == firstLyric && t.Track != LyricTrack(midi)))
                 .Select(t => Tidy(t.Text))
-                .Where(IsUsable)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (header.Count > 0)
-                return new SongInfo(header[0], header.Count > 1 ? header[1] : null, "MIDI text events");
+            var fromHeader = Pick(header, "MIDI text events");
+            if (fromHeader != null) return fromHeader;
         }
 
         var seqName = midi.Events
             .Where(e => e.IsMeta && e.MetaType == StandardMidiFile.MetaTrackName && e.Track == 0)
             .Select(e => Tidy(MidiLyricExtractor.DecodeText(e.Data)))
-            .FirstOrDefault(IsUsable);
-        return seqName != null ? new SongInfo(seqName, null, "MIDI sequence name") : SongInfo.Empty;
+            .FirstOrDefault(s => IsUsable(SongInfoCleaner.CleanTitle(s)));
+        return seqName != null
+            ? new SongInfo(SongInfoCleaner.CleanTitle(seqName), null, "MIDI sequence name", RawTitle: seqName)
+            : SongInfo.Empty;
+    }
+
+    /// <summary>
+    /// From an ordered list of header lines, takes the first usable one as the title and the first later
+    /// line that cleans up to a plausible artist.
+    /// </summary>
+    private static SongInfo? Pick(IReadOnlyList<string> lines, string source)
+    {
+        int titleIndex = -1;
+        string? title = null;
+        for (int i = 0; i < lines.Count && title == null; i++)
+        {
+            var cleaned = SongInfoCleaner.CleanTitle(lines[i]);
+            if (IsUsable(cleaned)) { title = cleaned; titleIndex = i; }
+        }
+        if (title == null) return null;
+
+        for (int i = titleIndex + 1; i < lines.Count; i++)
+        {
+            var artist = SongInfoCleaner.CleanArtist(lines[i], title);
+            if (artist != null)
+                return new SongInfo(title, artist, source, lines[titleIndex], lines[i]);
+        }
+        return new SongInfo(title, null, source, lines[titleIndex], lines.Count > titleIndex + 1 ? lines[titleIndex + 1] : null);
     }
 
     /// <summary>Reads song info from an audio file: ID3 tags for MP3, otherwise ffprobe (if available).</summary>
@@ -84,11 +107,11 @@ public static class SongInfoReader
             try
             {
                 var id3 = Id3Reader.Read(audioPath);
-                if (!id3.IsEmpty) return id3;
+                if (!id3.IsEmpty) return SongInfoCleaner.Clean(id3);
             }
             catch (IOException) { /* fall through to ffprobe */ }
         }
-        return tools != null ? await FromFfprobeAsync(tools, audioPath, ct).ConfigureAwait(false) : SongInfo.Empty;
+        return tools != null ? SongInfoCleaner.Clean(await FromFfprobeAsync(tools, audioPath, ct).ConfigureAwait(false)) : SongInfo.Empty;
     }
 
     /// <summary>Reads song info from any supported karaoke input.</summary>
@@ -128,7 +151,7 @@ public static class SongInfoReader
         using (var s = mp3.Open())
             s.CopyTo(ms);
         ms.Position = 0;
-        return Id3Reader.Read(ms);
+        return SongInfoCleaner.Clean(Id3Reader.Read(ms));
     }
 
     private static async Task<SongInfo> FromFfprobeAsync(FfmpegTools tools, string path, CancellationToken ct)
