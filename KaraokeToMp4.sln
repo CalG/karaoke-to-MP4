@@ -3,6 +3,8 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KaraokeToMp4.WinForms", "samples\KaraokeToMp4.WinForms\KaraokeToMp4.WinForms.csproj", "{7E2B4C1A-5D3F-4A8E-9B61-2C0F8D4E7A93}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{26F7B442-6613-4786-AB26-43A97A375D5D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KaraokeToMp4", "src\KaraokeToMp4\KaraokeToMp4.csproj", "{4C439936-9437-42A8-88AB-49283443C199}"
@@ -10,8 +12,6 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{FCFC5A09-B562-422A-A4D2-79F37536EAEA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KaraokeToMp4.Cli", "samples\KaraokeToMp4.Cli\KaraokeToMp4.Cli.csproj", "{DA7DDE2F-1755-466B-8519-71E12E1AAEB2}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KaraokeToMp4.WinForms", "samples\KaraokeToMp4.WinForms\KaraokeToMp4.WinForms.csproj", "{7E2B4C1A-5D3F-4A8E-9B61-2C0F8D4E7A93}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{71B3363C-D4A0-4D1C-9A07-69A548DA3290}"
 EndProject

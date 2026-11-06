@@ -238,7 +238,10 @@ before downloading it (`--yes` skips the question).
 
 If ffmpeg or a SoundFont is missing, the app asks before downloading it (once).
 
-Open `KaraokeToMp4.sln` in Visual Studio and set `KaraokeToMp4.WinForms` as the startup project, or run:
+Open **`KaraokeToMp4.sln`** in Visual Studio (File > Open > Project/Solution, not "Open Folder") and press
+F5. `KaraokeToMp4.WinForms` is the solution's default startup project. If Visual Studio remembers an
+older choice, right-click **KaraokeToMp4.WinForms** in Solution Explorer and choose **Set as Startup
+Project**. Or run:
 
 ```bash
 dotnet run --project samples/KaraokeToMp4.WinForms

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "karaoke2mp4 (help)": {
+      "commandName": "Project",
+      "commandLineArgs": "--help"
+    },
+    "karaoke2mp4 (info on a file)": {
+      "commandName": "Project",
+      "commandLineArgs": "\"C:\\Karaoke\\song.kar\" --info"
+    }
+  }
+}
