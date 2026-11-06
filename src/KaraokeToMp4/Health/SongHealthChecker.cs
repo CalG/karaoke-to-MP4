@@ -13,8 +13,14 @@ public enum SongHealthStatus
     /// <summary>Damaged, but <see cref="SongHealthChecker.Repair"/> can fix it completely.</summary>
     Repairable,
 
-    /// <summary>Damaged in a way that can't be fixed (missing data, missing audio, not a karaoke file...).</summary>
+    /// <summary>Damaged in a way that can't be fixed (part of the song missing, unreadable file...).</summary>
     CannotRepair,
+
+    /// <summary>Music without lyrics: audio with no .cdg (or an empty one), or a MIDI file with no lyrics.</summary>
+    OnlyMusic,
+
+    /// <summary>Lyrics without music: a .cdg with no (or empty) audio, or a KAR/MIDI file with lyrics but no notes.</summary>
+    OnlyLyrics,
 }
 
 /// <summary>Result of checking one song.</summary>
@@ -93,7 +99,7 @@ public static class SongHealthChecker
             if (ext == ".zip") return CheckZip(path);
             if (MidiExtensions.Contains(ext)) return CheckMidi(path);
             if (CdgConverter.AudioExtensions.Contains(ext))
-                return Result(path, "Audio", SongHealthStatus.CannotRepair, "No matching .cdg graphics file.");
+                return Result(path, "Audio", SongHealthStatus.OnlyMusic, "No matching .cdg graphics file (music only).");
             return Result(path, "Unknown", SongHealthStatus.CannotRepair, "Not a karaoke file type.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -137,9 +143,9 @@ public static class SongHealthChecker
     {
         var audio = CdgConverter.FindAudioForCdg(cdgPath);
         if (audio == null)
-            return Result(cdgPath, "MP3+G", SongHealthStatus.CannotRepair, "No matching audio file (e.g. .mp3).");
+            return Result(cdgPath, "MP3+G", SongHealthStatus.OnlyLyrics, "No matching audio file, e.g. .mp3 (lyrics only).");
         if (new FileInfo(audio).Length == 0)
-            return Result(cdgPath, "MP3+G", SongHealthStatus.CannotRepair, $"The audio file is empty (0 bytes): {System.IO.Path.GetFileName(audio)}");
+            return Result(cdgPath, "MP3+G", SongHealthStatus.OnlyLyrics, $"The audio file is empty, 0 bytes (lyrics only): {System.IO.Path.GetFileName(audio)}");
         return FromCdgData(cdgPath, "MP3+G", File.ReadAllBytes(cdgPath));
     }
 
@@ -147,20 +153,23 @@ public static class SongHealthChecker
     {
         using var zip = ZipFile.OpenRead(zipPath);
         var cdg = zip.Entries.FirstOrDefault(e => e.Name.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase));
-        if (cdg == null)
-            return Result(zipPath, "ZIP", SongHealthStatus.CannotRepair, "The .zip contains no .cdg file.");
         var audio = zip.Entries.FirstOrDefault(e => CdgConverter.AudioExtensions.Contains(Ext(e.Name)));
-        if (audio == null)
-            return Result(zipPath, "MP3+G zip", SongHealthStatus.CannotRepair, "The .zip contains no audio file.");
-        if (audio.Length == 0)
-            return Result(zipPath, "MP3+G zip", SongHealthStatus.CannotRepair, "The audio file inside the .zip is empty.");
-        return FromCdgData(zipPath, "MP3+G zip", ReadEntry(cdg));
+        bool hasAudio = audio is { Length: > 0 };
+        bool hasCdg = cdg is { Length: > 0 };
+        if (!hasCdg && hasAudio)
+            return Result(zipPath, "MP3+G zip", SongHealthStatus.OnlyMusic, "The .zip has audio but no .cdg graphics (music only).");
+        if (!hasCdg)
+            return Result(zipPath, "ZIP", SongHealthStatus.CannotRepair, "The .zip contains no karaoke files.");
+        if (!hasAudio)
+            return Result(zipPath, "MP3+G zip", SongHealthStatus.OnlyLyrics,
+                (audio == null ? "The .zip has no audio file" : "The audio file inside the .zip is empty") + " (lyrics only).");
+        return FromCdgData(zipPath, "MP3+G zip", ReadEntry(cdg!));
     }
 
     private static SongHealth FromCdgData(string path, string kind, byte[] data)
     {
         if (data.Length < CdgDecoder.PacketSize)
-            return Result(path, kind, SongHealthStatus.CannotRepair, "The .cdg file is empty.");
+            return Result(path, kind, SongHealthStatus.OnlyMusic, "The .cdg file is empty (music only).");
 
         var report = CdgInspector.Inspect(data);
         var details = new List<string>
@@ -203,7 +212,11 @@ public static class SongHealthChecker
         catch (InvalidDataException) { return Result(path, kind, SongHealthStatus.CannotRepair, "Not a valid MIDI file."); }
 
         if (KaraokeConverter.DetectFormat(path) == KaraokeFormat.Unknown)
-            return Result(path, kind, SongHealthStatus.CannotRepair, "Plain MIDI file with no lyrics (not a karaoke file).");
+            return Result(path, kind, SongHealthStatus.OnlyMusic, "Plain MIDI file with no lyrics (music only).");
+
+        bool hasNotes = midi.Events.Any(e => !e.IsMeta && (e.Status & 0xF0) == 0x90 && e.Data.Length > 1 && e.Data[1] > 0);
+        if (!hasNotes)
+            return Result(path, kind, SongHealthStatus.OnlyLyrics, "Lyrics but no music: the file has no notes (lyrics only).");
 
         var details = midi.Problems.Concat(midi.Repairs).ToList();
         if (midi.IsTruncated)

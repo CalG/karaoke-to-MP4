@@ -70,13 +70,62 @@ public class SongHealthCheckerTests
     }
 
     [Fact]
-    public void MissingOrEmptyAudio_CannotRepair()
+    public void MissingOrEmptyAudio_IsOnlyLyrics()
     {
         using var dir = new TempDir();
         var lone = TestFiles.WriteTemp(dir.Path, "lone.cdg", CdgWithParity());
-        Assert.Contains("audio", SongHealthChecker.Check(lone).Summary);
+        Assert.Equal(SongHealthStatus.OnlyLyrics, SongHealthChecker.Check(lone).Status);
         var empty = Pair(dir, "empty", CdgWithParity(), audioBytes: 0);
-        Assert.Equal(SongHealthStatus.CannotRepair, SongHealthChecker.Check(empty).Status);
+        Assert.Equal(SongHealthStatus.OnlyLyrics, SongHealthChecker.Check(empty).Status);
+    }
+
+    [Fact]
+    public void EmptyCdg_IsOnlyMusic()
+    {
+        using var dir = new TempDir();
+        var path = Pair(dir, "song", Array.Empty<byte>());
+        Assert.Equal(SongHealthStatus.OnlyMusic, SongHealthChecker.Check(path).Status);
+    }
+
+    [Fact]
+    public void Zips_OnlyMusic_OnlyLyrics_AndJunk()
+    {
+        using var dir = new TempDir();
+        string MakeZip(string name, bool audio, bool cdg)
+        {
+            var path = dir.File(name);
+            using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
+            if (audio) using (var s = zip.CreateEntry("Song.mp3").Open()) s.Write(new byte[100]);
+            if (cdg) using (var s = zip.CreateEntry("Song.cdg").Open()) s.Write(CdgWithParity());
+            using (var s = zip.CreateEntry("readme.txt").Open()) s.Write("x"u8);
+            return path;
+        }
+        Assert.Equal(SongHealthStatus.OnlyMusic, SongHealthChecker.Check(MakeZip("music.zip", true, false)).Status);
+        Assert.Equal(SongHealthStatus.OnlyLyrics, SongHealthChecker.Check(MakeZip("lyrics.zip", false, true)).Status);
+        Assert.Equal(SongHealthStatus.CannotRepair, SongHealthChecker.Check(MakeZip("junk.zip", false, false)).Status);
+        Assert.Equal(SongHealthStatus.NoIssues, SongHealthChecker.Check(MakeZip("good.zip", true, true)).Status);
+    }
+
+    [Fact]
+    public void LyricsWithoutNotes_IsOnlyLyrics()
+    {
+        // One track: a few lyric events and nothing else.
+        var track = new List<byte>();
+        foreach (var word in new[] { "Hel", "lo ", "world" })
+        {
+            track.AddRange(new byte[] { 0x83, 0x60, 0xFF, 0x05, (byte)word.Length });
+            track.AddRange(System.Text.Encoding.ASCII.GetBytes(word));
+        }
+        track.AddRange(new byte[] { 0x00, 0xFF, 0x2F, 0x00 });
+        var file = new List<byte>("MThd"u8.ToArray());
+        file.AddRange(new byte[] { 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xE0 });
+        file.AddRange("MTrk"u8.ToArray());
+        file.AddRange(new[] { (byte)(track.Count >> 24), (byte)(track.Count >> 16), (byte)(track.Count >> 8), (byte)track.Count });
+        file.AddRange(track);
+
+        using var dir = new TempDir();
+        var path = TestFiles.WriteTemp(dir.Path, "words.mid", file.ToArray());
+        Assert.Equal(SongHealthStatus.OnlyLyrics, SongHealthChecker.Check(path).Status);
     }
 
     [Fact]
@@ -119,6 +168,7 @@ public class SongHealthCheckerTests
         Assert.Contains("cut off", SongHealthChecker.Check(cut).Summary);
         Assert.Contains("empty", SongHealthChecker.Check(empty).Summary);
         Assert.Contains("no lyrics", SongHealthChecker.Check(plain).Summary);
+        Assert.Equal(SongHealthStatus.OnlyMusic, SongHealthChecker.Check(plain).Status);
     }
 
     [Fact]
@@ -153,7 +203,7 @@ public class SongHealthCheckerTests
 
         var top = SongHealthChecker.FindSongs(new[] { dir.Path }, includeSubfolders: false).Select(Path.GetFileName).ToList();
         Assert.DoesNotContain("b.kar", top);
-        Assert.Equal(SongHealthStatus.CannotRepair, SongHealthChecker.Check(dir.File("orphan.mp3")).Status);
+        Assert.Equal(SongHealthStatus.OnlyMusic, SongHealthChecker.Check(dir.File("orphan.mp3")).Status);
     }
 
     [Fact]

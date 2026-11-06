@@ -20,6 +20,8 @@ internal sealed class MainForm : Form
         (SongHealthStatus.NoIssues, "No issues detected"),
         (SongHealthStatus.Repairable, "Bad but repairable"),
         (SongHealthStatus.CannotRepair, "Cannot repair"),
+        (SongHealthStatus.OnlyMusic, "Only music"),
+        (SongHealthStatus.OnlyLyrics, "Only lyrics"),
     };
 
     private readonly ListBox _folderList = new()
@@ -257,9 +259,12 @@ internal sealed class MainForm : Form
 
         int bad = _views[SongHealthStatus.Repairable].Items.Count;
         int dead = _views[SongHealthStatus.CannotRepair].Items.Count;
+        int music = _views[SongHealthStatus.OnlyMusic].Items.Count;
+        int lyrics = _views[SongHealthStatus.OnlyLyrics].Items.Count;
         SetStatus((cancelled ? "Scan cancelled. " : "Scan finished. ") +
                   $"{_checked:N0} songs checked in {stopwatch.Elapsed:m\\:ss}: " +
-                  $"{_views[SongHealthStatus.NoIssues].Items.Count:N0} OK, {bad:N0} repairable, {dead:N0} cannot be repaired.");
+                  $"{_views[SongHealthStatus.NoIssues].Items.Count:N0} OK, {bad:N0} repairable, {dead:N0} cannot be repaired, " +
+                  $"{music:N0} only music, {lyrics:N0} only lyrics.");
         if (bad > 0) _tabs.SelectedTab = _pages[SongHealthStatus.Repairable];
         else if (dead > 0) _tabs.SelectedTab = _pages[SongHealthStatus.CannotRepair];
     }

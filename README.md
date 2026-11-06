@@ -277,18 +277,21 @@ dotnet run --project samples/KaraokeToMp4.WinForms
 
 1. **Add Folder...** (or drag folders onto the list) for each karaoke folder. Tick *Include subfolders*
    to scan everything below them. The list is remembered between runs.
-2. **Scan** checks every song and sorts it into three tabs:
+2. **Scan** checks every song and sorts it into five tabs:
    * **No issues detected**
    * **Bad but repairable**, e.g. a scratched-disc CDG whose damaged packets the error-correction data
      can fix, or a MIDI/KAR file with malformed bytes that can be cleaned up.
-   * **Cannot repair**, e.g. a file that was cut off (part of the song is missing), an empty file, a
-     .cdg without its audio, an MP3 without its .cdg, or a plain MIDI file with no lyrics.
+   * **Cannot repair**, e.g. a file that was cut off (part of the song is missing), an empty or unreadable file.
+   * **Only music**: an MP3 (or other audio) in a karaoke folder without a matching .cdg, an empty .cdg,
+     a .zip with audio but no .cdg, or a plain MIDI file with no lyrics.
+   * **Only lyrics**: a .cdg without an audio file (or with an empty one), a .zip with a .cdg but no
+     audio, or a KAR/MIDI file with lyrics but no notes.
 3. **Fix Checked** / **Fix All Repairable** repairs those songs in place. With *Keep a backup* ticked
    (the default), each original is kept next to it as `name.ext.bak`. Fixed songs move to the
    *No issues* tab.
 
 Select a song to see details (e.g. where in the song the damage is). Double-click it to show it in
-Explorer. **Export Report...** saves all three lists as a CSV file.
+Explorer. **Export Report...** saves all the lists as a CSV file.
 
 What is checked:
 
