@@ -153,6 +153,25 @@ dotnet run --project samples/KaraokeToMp4.Cli -- song.kar song.mp4 --soundfont G
 Run with `--help` for all options. If ffmpeg or (for KAR/MIDI) a SoundFont is missing, the CLI asks
 before downloading it (`--yes` skips the question).
 
+## Windows test app
+
+`samples/KaraokeToMp4.WinForms` is a small Windows app for trying the library:
+
+1. Click **Browse...** (or drag a file onto the window) and pick an `.mp3`/`.cdg`/`.zip`, `.kar` or `.mid`.
+   The detected format and the output path are shown.
+2. Click **Convert to MP4**. The video is written **next to the source file** with the same name,
+   e.g. `C:\Karaoke\Song.mp3` becomes `C:\Karaoke\Song.mp4`. You're asked before an existing file is replaced.
+3. A progress bar shows downloading, synthesis and encoding. **Cancel** stops the conversion, and
+   **Open Folder** shows the finished MP4 in Explorer.
+
+If ffmpeg or a SoundFont is missing, the app asks before downloading it (once).
+
+Open `KaraokeToMp4.sln` in Visual Studio and set `KaraokeToMp4.WinForms` as the startup project, or run:
+
+```bash
+dotnet run --project samples/KaraokeToMp4.WinForms
+```
+
 ## How it works
 
 * **CDG**: packets are 24 bytes at 300 packets/second. `CdgDecoder` implements Memory Preset,
