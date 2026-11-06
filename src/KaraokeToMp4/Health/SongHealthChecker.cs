@@ -105,8 +105,9 @@ public static class SongHealthChecker
             if (IsArchivePath(path)) return CheckArchive(path);
             return Result(path, "Unknown", SongHealthStatus.CannotRepair, "Not a karaoke file type.");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException))
         {
+            // Never let one bad file stop a scan of a whole collection.
             return Result(path, KindOf(path), SongHealthStatus.CannotRepair, "Could not read the file: " + ex.Message);
         }
     }
@@ -201,6 +202,21 @@ public static class SongHealthChecker
                 return Result(path, kind, SongHealthStatus.CannotRepair, "The archive is password-protected.");
 
             var songs = archive.FindSongs();
+
+            if (archive.IsRecovered)
+            {
+                // The zip's index is damaged but its files could be read one by one.
+                bool lost = archive.RecoveryNote!.Contains("lost", StringComparison.Ordinal);
+                var details = new List<string> { archive.RecoveryNote };
+                details.AddRange(archive.Entries.Select(e => $"recovered: {e.FullName} ({e.Size:N0} bytes)"));
+                return lost || songs.Count == 0
+                    ? new SongHealth(path, kind, SongHealthStatus.CannotRepair,
+                        "Damaged zip: part of its contents is cut off and lost." +
+                        (songs.Count > 0 ? " Fix isn't offered; the recovered files are listed in the details." : ""), details)
+                    : new SongHealth(path, kind, SongHealthStatus.Repairable,
+                        $"Damaged zip index (often a cut-off copy or download); all {archive.Entries.Count} files were recovered. Fix rebuilds the zip.", details);
+            }
+
             if (songs.Count == 0)
                 return Result(path, $"{format} ({ext})", SongHealthStatus.CannotRepair, "The archive contains no karaoke files.");
 

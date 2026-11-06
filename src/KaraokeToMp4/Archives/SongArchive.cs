@@ -8,13 +8,35 @@ namespace KaraokeToMp4.Archives;
 /// <summary>One file inside an archive.</summary>
 public sealed class SongArchiveEntry
 {
-    private readonly IArchiveEntry _entry;
+    private readonly Func<byte[]> _read;
 
     internal SongArchiveEntry(IArchiveEntry entry)
+        : this(entry.Key, entry.Size, entry.LastModifiedTime, entry.IsEncrypted, () => ReadStream(entry.OpenEntryStream, entry.Size))
     {
-        _entry = entry;
-        FullName = (entry.Key ?? "").Replace('\\', '/');
+    }
+
+    /// <summary>An entry whose bytes were already read (used when recovering a damaged zip).</summary>
+    internal SongArchiveEntry(string? key, byte[] data, DateTime? lastModified, bool encrypted)
+        : this(key, data.Length, lastModified, encrypted, () => data)
+    {
+    }
+
+    private SongArchiveEntry(string? key, long size, DateTime? lastModified, bool encrypted, Func<byte[]> read)
+    {
+        FullName = (key ?? "").Replace('\\', '/');
         Name = Path.GetFileName(FullName);
+        Size = size;
+        LastModified = lastModified;
+        IsEncrypted = encrypted;
+        _read = read;
+    }
+
+    private static byte[] ReadStream(Func<Stream> open, long size)
+    {
+        using var input = open();
+        using var ms = new MemoryStream(size > 0 && size < int.MaxValue ? (int)size : 0);
+        input.CopyTo(ms);
+        return ms.ToArray();
     }
 
     /// <summary>File name without folders.</summary>
@@ -24,19 +46,24 @@ public sealed class SongArchiveEntry
     public string FullName { get; }
 
     /// <summary>Uncompressed size in bytes.</summary>
-    public long Size => _entry.Size;
+    public long Size { get; }
 
-    public DateTime? LastModified => _entry.LastModifiedTime;
+    public DateTime? LastModified { get; }
 
-    public bool IsEncrypted => _entry.IsEncrypted;
+    public bool IsEncrypted { get; }
 
     /// <summary>Decompresses the entry.</summary>
+    /// <exception cref="InvalidDataException">The entry's data is damaged.</exception>
     public byte[] ReadAllBytes()
     {
-        using var input = _entry.OpenEntryStream();
-        using var ms = new MemoryStream(Size > 0 && Size < int.MaxValue ? (int)Size : 0);
-        input.CopyTo(ms);
-        return ms.ToArray();
+        try
+        {
+            return _read();
+        }
+        catch (Exception ex) when (SongArchive.IsDataError(ex))
+        {
+            throw new InvalidDataException($"'{Name}' inside the archive is damaged: {ex.Message}", ex);
+        }
     }
 }
 
@@ -76,19 +103,50 @@ public sealed class SongArchive : IDisposable
     /// <summary>True when this tool can rewrite the archive (ZIP only).</summary>
     public bool CanRewrite => Type == ArchiveType.Zip;
 
+    /// <summary>
+    /// True when the archive's index was damaged and the files were recovered by reading the archive from
+    /// the start instead. <see cref="RecoveryNote"/> says what was (and wasn't) recovered.
+    /// </summary>
+    public bool IsRecovered { get; private init; }
+
+    /// <summary>Explanation of a recovery (see <see cref="IsRecovered"/>).</summary>
+    public string? RecoveryNote { get; private init; }
+
+    /// <summary>
+    /// True for exceptions caused by the archive's content (damage, unsupported data) rather than by access
+    /// to the file (missing, locked, no permission) or cancellation.
+    /// </summary>
+    internal static bool IsDataError(Exception ex) =>
+        ex is not (OperationCanceledException or UnauthorizedAccessException or FileNotFoundException
+                  or DirectoryNotFoundException or OutOfMemoryException) &&
+        (ex is not IOException || ex is EndOfStreamException || ex is InvalidDataException);
+
     /// <summary>Opens <paramref name="path"/>; throws <see cref="InvalidDataException"/> if it isn't a readable archive.</summary>
     public static SongArchive Open(string path)
     {
-        IArchive outer;
         try
         {
-            outer = ArchiveFactory.Open(path, new ReaderOptions());
+            return OpenNormally(path);
         }
-        catch (Exception ex) when (ex is not (OperationCanceledException or IOException or UnauthorizedAccessException))
+        catch (Exception ex) when (IsDataError(ex))
         {
-            throw new InvalidDataException($"'{Path.GetFileName(path)}' is not a readable archive: {ex.Message}", ex);
+            // A zip whose index (central directory) is missing or damaged - typically a cut-off download or
+            // copy - can usually still be read file by file from the start.
+            string? lostFile = null;
+            if (ArchiveSniffer.Detect(path) == ArchiveKind.Zip)
+            {
+                var recovered = TryRecoverZip(path, ex.Message, out lostFile);
+                if (recovered != null) return recovered;
+            }
+            throw new InvalidDataException(lostFile != null
+                ? $"'{Path.GetFileName(path)}' is damaged: the zip is cut off inside '{Path.GetFileName(lostFile)}', so its contents are lost."
+                : $"'{Path.GetFileName(path)}' is damaged or not a readable archive: {ex.Message}", ex);
         }
+    }
 
+    private static SongArchive OpenNormally(string path)
+    {
+        var outer = ArchiveFactory.Open(path, new ReaderOptions());
         var owned = new List<IDisposable> { outer };
         try
         {
@@ -115,6 +173,56 @@ public sealed class SongArchive : IDisposable
             foreach (var d in owned) d.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Reads a zip front to back using the header stored before each file, ignoring the (damaged) index at
+    /// the end. Files that are cut off are left out. Returns null when nothing could be recovered.
+    /// </summary>
+    private static SongArchive? TryRecoverZip(string path, string indexError, out string? lostAt)
+    {
+        var entries = new List<SongArchiveEntry>();
+        lostAt = null;
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var reader = ReaderFactory.Open(fs, new ReaderOptions { LookForHeader = true });
+            while (true)
+            {
+                bool more;
+                try { more = reader.MoveToNextEntry(); }
+                catch (Exception ex) when (IsDataError(ex)) { break; } // reached the damage
+                if (!more) break;
+
+                var entry = reader.Entry;
+                if (entry.IsDirectory) continue;
+                try
+                {
+                    using var ms = new MemoryStream();
+                    using (var s = reader.OpenEntryStream()) s.CopyTo(ms);
+                    if (entry.Size > 0 && ms.Length != entry.Size)
+                    {
+                        lostAt = entry.Key;
+                        break;
+                    }
+                    entries.Add(new SongArchiveEntry(entry.Key, ms.ToArray(), entry.LastModifiedTime, entry.IsEncrypted));
+                }
+                catch (Exception ex) when (IsDataError(ex))
+                {
+                    lostAt = entry.Key;
+                    break;
+                }
+            }
+        }
+        catch (Exception ex) when (IsDataError(ex))
+        {
+            // Couldn't even start reading: fall through with whatever was recovered.
+        }
+
+        if (entries.Count == 0) return null;
+        var note = $"The zip's index is damaged ({indexError}); {entries.Count} file{(entries.Count == 1 ? " was" : "s were")} recovered" +
+                   (lostAt != null ? $", but '{Path.GetFileName(lostAt)}' is cut off and was lost." : ".");
+        return new SongArchive("ZIP", ArchiveType.Zip, entries) { IsRecovered = true, RecoveryNote = note };
     }
 
     private static IArchive? TryOpenNested(IArchiveEntry entry, List<IDisposable> owned)

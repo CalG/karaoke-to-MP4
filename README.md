@@ -319,6 +319,12 @@ reported but not opened.
 When the Song Checker repairs or splits a ZIP, the new files are standard (Deflate) ZIPs. Other
 formats are never modified.
 
+**Damaged zips.** An interrupted copy or download often cuts off a zip's index (the table of contents at
+the end of the file), and archive tools then report "Failed to locate zip header". The files inside can
+usually still be read one by one from the start. If everything is recovered, the zip is listed as
+*Bad but repairable* and Fix rebuilds it. If part of a song was cut off, it is listed under *Cannot
+repair* with the name of the lost file. A damaged file never stops a scan.
+
 ## How it works
 
 * **CDG**: packets are 24 bytes at 300 packets/second. `CdgDecoder` implements Memory Preset,

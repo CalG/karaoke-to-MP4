@@ -233,7 +233,18 @@ internal sealed class MainForm : Form
                 };
                 Parallel.ForEach(songs, options, path =>
                 {
-                    _incoming.Enqueue(SongHealthChecker.Check(path));
+                    SongHealth result;
+                    try
+                    {
+                        result = SongHealthChecker.Check(path);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Belt and braces: one unreadable file must never stop the whole scan.
+                        result = new SongHealth(path, Path.GetExtension(path), SongHealthStatus.CannotRepair,
+                            "Could not check the file: " + ex.Message, Array.Empty<string>());
+                    }
+                    _incoming.Enqueue(result);
                     Interlocked.Increment(ref _checked);
                 });
             }, token);
