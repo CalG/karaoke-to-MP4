@@ -26,6 +26,12 @@ public sealed record CdgReport
     /// <summary>Graphics packets with an instruction code that doesn't exist (after repair).</summary>
     public int UnknownInstructions { get; init; }
 
+    /// <summary>
+    /// Filler packets: an unused instruction code with every data symbol the same (e.g. Music Maestro
+    /// discs fill unused graphics slots with packets whose symbols are all 0x09). Ignored when rendering.
+    /// </summary>
+    public int FillerPackets { get; init; }
+
     /// <summary>Tile packets aimed outside the screen (after repair).</summary>
     public int OffScreenTiles { get; init; }
 
@@ -53,6 +59,7 @@ public sealed record CdgReport
             if (Repairable > 0) parts.Add($"{Repairable} damaged packet{(Repairable == 1 ? "" : "s")} (repaired automatically)");
             if (Unrepairable > 0) parts.Add($"{Unrepairable} packet{(Unrepairable == 1 ? "" : "s")} too damaged to repair (skipped)");
             var ignored = HasParity ? " (not damage; ignored as on a real player)" : " (possible damage)";
+            if (FillerPackets > 0) parts.Add($"{FillerPackets} filler packet{(FillerPackets == 1 ? "" : "s")} (normal for some producers, e.g. Music Maestro; ignored)");
             if (UnknownInstructions > 0) parts.Add($"{UnknownInstructions} packet{(UnknownInstructions == 1 ? "" : "s")} with a non-standard instruction{ignored}");
             if (OffScreenTiles > 0) parts.Add($"{OffScreenTiles} off-screen tile{(OffScreenTiles == 1 ? "" : "s")}{ignored}");
             if (TrailingBytes > 0) parts.Add($"file ends mid-packet ({TrailingBytes} extra bytes)");
@@ -86,7 +93,7 @@ public static class CdgInspector
         int count = data.Length / CdgDecoder.PacketSize;
         bool hasParity = DetectParity(data, count);
 
-        int graphics = 0, repaired = 0, unrepairable = 0, unknown = 0, offscreen = 0;
+        int graphics = 0, repaired = 0, unrepairable = 0, unknown = 0, offscreen = 0, filler = 0;
         var times = new List<TimeSpan>();
 
         for (int i = 0; i < count; i++)
@@ -114,7 +121,11 @@ public static class CdgInspector
             if ((packet[0] & 0x3F) != 0x09) continue;
             graphics++;
             int instruction = packet[1] & 0x3F;
-            if (!KnownInstructions.Contains(instruction)) { unknown++; continue; }
+            if (!KnownInstructions.Contains(instruction))
+            {
+                if (IsFiller(packet)) filler++; else unknown++;
+                continue;
+            }
             if (instruction is 6 or 38 && ((packet[6] & 0x1F) >= CdgDecoder.Rows || (packet[7] & 0x3F) >= CdgDecoder.Columns))
                 offscreen++;
         }
@@ -128,10 +139,19 @@ public static class CdgInspector
             Repairable = repaired,
             Unrepairable = unrepairable,
             UnknownInstructions = unknown,
+            FillerPackets = filler,
             OffScreenTiles = offscreen,
             TrailingBytes = data.Length % CdgDecoder.PacketSize,
             DamageTimes = times,
         };
+    }
+
+    private static bool IsFiller(ReadOnlySpan<byte> packet)
+    {
+        int first = packet[4] & 0x3F;
+        for (int i = 5; i < 20; i++)
+            if ((packet[i] & 0x3F) != first) return false;
+        return true;
     }
 
     /// <summary>

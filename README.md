@@ -121,8 +121,11 @@ karaoke2mp4 "song.cdg" --info
 ```
 
 The Windows app shows the same result on its *File check* line. Use `--no-cdg-repair` to see a file
-exactly as stored. Packets with non-standard instruction codes that pass the error check (some
-producers use them) are reported but not treated as damage.
+exactly as stored. Some producers fill unused graphics slots with filler packets; Music Maestro
+discs, for example, use instruction code 9 with every symbol 0x09. These are reported as filler and
+ignored, as a real player ignores them. Other packets with non-standard instruction codes that pass
+the error check are reported but not treated as damage. CD+EG (extended graphics) packets are also
+ignored; the standard CD+G layer is drawn.
 
 ### Damaged files
 

@@ -97,3 +97,22 @@ public class CdgParityTests
         Assert.Contains("can't be detected", report.Summary);
     }
 }
+
+public class CdgFillerTests
+{
+    [Fact]
+    public void MusicMaestroStyleFiller_IsReportedAsFillerNotDamage()
+    {
+        var filler = new byte[24];
+        for (int i = 0; i < 20; i++) filler[i] = 0x09;   // command 9, instruction 9, all data 0x09
+        filler[9] |= 0x40;                                  // other subcode channel bit set, as on real discs
+        KaraokeToMp4.Cdg.CdgParity.ComputeParity(filler);
+        var data = Enumerable.Repeat(filler, 100).SelectMany(p => p).ToArray();
+
+        var report = KaraokeToMp4.Cdg.CdgInspector.Inspect(data);
+        Assert.Equal(100, report.FillerPackets);
+        Assert.Equal(0, report.UnknownInstructions);
+        Assert.True(report.IsClean);
+        Assert.StartsWith("OK", report.Summary);
+    }
+}
