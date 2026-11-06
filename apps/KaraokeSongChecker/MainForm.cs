@@ -61,6 +61,7 @@ internal sealed class MainForm : Form
     private readonly Button _fixChecked = Btn("Fix Checked");
     private readonly Button _fixAll = Btn("Fix All Repairable");
     private readonly Button _export = Btn("Export Report...");
+    private readonly Button _organize = Btn("Organize Files...");
 
     private CancellationTokenSource? _cts;
     private readonly ConcurrentQueue<SongHealth> _incoming = new();
@@ -117,7 +118,7 @@ internal sealed class MainForm : Form
         }
 
         var fixRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-        fixRow.Controls.AddRange(new Control[] { _fixChecked, _fixAll, _export });
+        fixRow.Controls.AddRange(new Control[] { _fixChecked, _fixAll, _export, _organize });
 
         // ---- main layout ----
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(10), ColumnCount = 1, RowCount = 5 };
@@ -141,6 +142,7 @@ internal sealed class MainForm : Form
         _fixChecked.Click += async (_, _) => await FixAsync(onlyChecked: true);
         _fixAll.Click += async (_, _) => await FixAsync(onlyChecked: false);
         _export.Click += (_, _) => ExportReport();
+        _organize.Click += (_, _) => Organize();
         _drainTimer.Tick += (_, _) => DrainResults();
         _folderList.AllowDrop = true;
         _folderList.DragEnter += (_, e) => { if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy; };
@@ -385,6 +387,38 @@ internal sealed class MainForm : Form
                   (failed > 0 ? $"; {failed:N0} could not be repaired (see the lists)" : "") + ".");
     }
 
+    // ---------------- organizing ----------------
+
+    private void Organize()
+    {
+        var songs = Lists.ToDictionary(
+            l => l.Status,
+            l => (IReadOnlyList<SongHealth>)_views[l.Status].Items.Cast<ListViewItem>().Select(i => (SongHealth)i.Tag!).ToList());
+        if (songs.Values.All(l => l.Count == 0))
+        {
+            SetStatus("Scan first: there are no songs to organize.");
+            return;
+        }
+
+        // Suggest the scanned folder as the source root when there is exactly one.
+        var folders = _folderList.Items.Cast<string>().ToList();
+        using var dialog = new OrganizeForm(songs, folders.Count == 1 ? folders[0] : null);
+        dialog.ShowDialog(this);
+
+        if (dialog.MovedSongs.Count > 0)
+        {
+            foreach (var view in _views.Values)
+            {
+                view.BeginUpdate();
+                foreach (var item in view.Items.Cast<ListViewItem>().Where(i => dialog.MovedSongs.Contains(((SongHealth)i.Tag!).Path)).ToList())
+                    view.Items.Remove(item);
+                view.EndUpdate();
+            }
+            UpdateTabTitles();
+        }
+        if (dialog.Summary != null) SetStatus(dialog.Summary);
+    }
+
     // ---------------- report ----------------
 
     private void ExportReport()
@@ -494,6 +528,7 @@ internal sealed class MainForm : Form
         _fixChecked.Enabled = !busy;
         _fixAll.Enabled = !busy;
         _export.Enabled = !busy;
+        _organize.Enabled = !busy;
         UseWaitCursor = busy;
     }
 

@@ -294,6 +294,31 @@ dotnet run --project samples/KaraokeToMp4.WinForms
 Select a song to see details (e.g. where in the song the damage is). Double-click it to show it in
 Explorer. **Export Report...** saves all the lists as a CSV file.
 
+**Organize Files...** moves the songs of each list to its own root folder, keeping their path relative
+to a source root:
+
+```
+Source root:   \\wd-cloud.lan\cdg\Songs\Archive
+Only lyrics →  \\wd-cloud.lan\cdg\Songs\Missing Music
+  Archive\CDG\CDG\e\E., Sheila - Love Bizzare, A - SC8718-05.zip
+  → Missing Music\CDG\CDG\e\E., Sheila - Love Bizzare, A - SC8718-05.zip
+```
+
+* Tick the lists to process. *Only lyrics*, *Only music* and *Cannot repair* are ticked at first.
+  Each list has its own destination root. The folders are remembered.
+* **Bad but repairable** songs are **copied** (the originals stay for repairing). All other lists are **moved**.
+* A song's files travel together: a .cdg with its audio, plus any `.bak` copies from repairs.
+* Nothing is ever overwritten. If the destination already holds a *different* file with the same name,
+  the whole song stays where it is and is reported. An *identical* copy counts as done.
+* Destinations can't be inside the source root (or the other way round). Songs outside the source root
+  are skipped.
+* Optionally, folders left empty under the source root are removed.
+* Every file is recorded in a CSV log (`%LOCALAPPDATA%\KaraokeTools\logs\organize-<date>.csv`), opened
+  with *Open log*.
+
+Moved songs disappear from the result lists. Other programs can use the same logic through
+`KaraokeToMp4.Health.SongOrganizer`.
+
 What is checked:
 
 | Song | Checks |
