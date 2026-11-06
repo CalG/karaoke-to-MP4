@@ -271,6 +271,37 @@ Project**. Or run:
 dotnet run --project samples/KaraokeToMp4.WinForms
 ```
 
+## Karaoke Song Checker (Windows)
+
+`apps/KaraokeSongChecker` is a separate Windows program that scans whole karaoke collections for damaged songs:
+
+1. **Add Folder...** (or drag folders onto the list) for each karaoke folder. Tick *Include subfolders*
+   to scan everything below them. The list is remembered between runs.
+2. **Scan** checks every song and sorts it into three tabs:
+   * **No issues detected**
+   * **Bad but repairable**, e.g. a scratched-disc CDG whose damaged packets the error-correction data
+     can fix, or a MIDI/KAR file with malformed bytes that can be cleaned up.
+   * **Cannot repair**, e.g. a file that was cut off (part of the song is missing), an empty file, a
+     .cdg without its audio, an MP3 without its .cdg, or a plain MIDI file with no lyrics.
+3. **Fix Checked** / **Fix All Repairable** repairs those songs in place. With *Keep a backup* ticked
+   (the default), each original is kept next to it as `name.ext.bak`. Fixed songs move to the
+   *No issues* tab.
+
+Select a song to see details (e.g. where in the song the damage is). Double-click it to show it in
+Explorer. **Export Report...** saves all three lists as a CSV file.
+
+What is checked:
+
+| Song | Checks |
+|---|---|
+| `.cdg` + audio | audio present and not empty; every graphics packet checked with the CD+G error-correction data |
+| `.zip` (MP3+G) | the same, inside the zip (repairs rewrite the zip) |
+| `.kar` / `.mid` | valid MIDI, has lyrics, not cut off, no malformed events |
+| audio in a karaoke folder | has a matching `.cdg` |
+
+The same checks are available to other programs through `KaraokeToMp4.Health.SongHealthChecker`
+(`FindSongs`, `Check`, `Repair`).
+
 ## How it works
 
 * **CDG**: packets are 24 bytes at 300 packets/second. `CdgDecoder` implements Memory Preset,

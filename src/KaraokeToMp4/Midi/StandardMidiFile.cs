@@ -59,6 +59,12 @@ public sealed class StandardMidiFile
     public bool IsDamaged => _problems.Count > 0;
 
     /// <summary>
+    /// True when part of the song is missing (the file was cut off, or tracks the header lists are absent).
+    /// Lost data can't be recovered, unlike malformed bytes which can be cleaned up.
+    /// </summary>
+    public bool IsTruncated { get; }
+
+    /// <summary>
     /// Small faults that were worked around (e.g. a malformed text event that was skipped). The file
     /// should still play normally.
     /// </summary>
@@ -115,6 +121,7 @@ public sealed class StandardMidiFile
             bool isTrack = id.SequenceEqual("MTrk"u8);
             if (declared > (uint)len)
             {
+                if (isTrack) IsTruncated = true;
                 _problems.Add(isTrack
                     ? $"Track {track + 1} needs {declared:N0} bytes but the file ends after {len:N0}: the file is truncated ({span.Length:N0} bytes)."
                     : $"Unexpected data at byte {pos:N0}: the file is damaged from there on.");
@@ -135,7 +142,10 @@ public sealed class StandardMidiFile
         }
         TrackCount = track;
         if (declaredTracks > track)
+        {
+            IsTruncated = true;
             _problems.Add($"The header lists {declaredTracks} tracks but only {track} were found.");
+        }
 
         // Stable sort by tick: List.Sort isn't stable, so sort with the original index as tiebreak.
         var indexed = events.Select((e, i) => (e, i)).ToList();
