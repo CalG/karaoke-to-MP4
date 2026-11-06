@@ -26,6 +26,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _rawTitleValue = ValueBox();
     private readonly TextBox _rawArtistValue = ValueBox();
     private readonly TextBox _outputValue = ValueBox();
+    private readonly TextBox _fileCheckValue = ValueBox();
     private readonly CheckBox _includeArtistBox = new()
     {
         Text = "Include artist in file name, MP4 tags and title screen",
@@ -45,8 +46,8 @@ internal sealed class MainForm : Form
     {
         Text = "Karaoke to MP4";
         Width = 760;
-        Height = 470;
-        MinimumSize = new Size(600, 470);
+        Height = 500;
+        MinimumSize = new Size(600, 500);
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true;
 
@@ -79,6 +80,7 @@ internal sealed class MainForm : Form
         AddField(details, "Raw title:", _rawTitleValue);
         AddField(details, "Raw artist:", _rawArtistValue);
         AddField(details, "Output:", _outputValue);
+        AddField(details, "File check:", _fileCheckValue);
         details.Controls.Add(_includeArtistBox, 1, details.RowCount++);
 
         var group = new GroupBox { Text = "Song details", Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(6) };
@@ -155,7 +157,7 @@ internal sealed class MainForm : Form
 
     private void ClearDetails()
     {
-        foreach (var box in new[] { _formatValue, _titleValue, _artistValue, _sourceValue, _rawTitleValue, _rawArtistValue, _outputValue })
+        foreach (var box in new[] { _formatValue, _titleValue, _artistValue, _sourceValue, _rawTitleValue, _rawArtistValue, _outputValue, _fileCheckValue })
             box.Text = "-";
     }
 
@@ -209,6 +211,8 @@ internal sealed class MainForm : Form
         // the output name when missing from it, and written into the MP4's metadata.
         _fileInfo = ok ? ReadSongInfo(path) : SongInfo.Empty;
         ShowSongInfo();
+        _fileCheckValue.Text = ok ? CheckFile(path, format) : "-";
+        _fileCheckValue.ForeColor = _fileCheckValue.Text.StartsWith("OK") ? SystemColors.ControlText : Color.DarkRed;
         _convertButton.Enabled = ok;
         SetStatus(ok ? "Ready." : "This file can't be converted.");
     }
@@ -284,6 +288,21 @@ internal sealed class MainForm : Form
             _cts.Dispose();
             _cts = null;
             SetBusy(false);
+        }
+    }
+
+    /// <summary>Reports damaged/truncated MIDI files, which still convert but may stop early.</summary>
+    private static string CheckFile(string path, KaraokeFormat format)
+    {
+        if (format is not (KaraokeFormat.Kar or KaraokeFormat.MidiWithLyrics)) return "OK";
+        try
+        {
+            var midi = KaraokeToMp4.Midi.StandardMidiFile.FromFile(path);
+            return midi.IsDamaged ? "Damaged - " + string.Join(" ", midi.Problems) + " It will convert, but may stop early." : "OK";
+        }
+        catch (Exception ex)
+        {
+            return "Unreadable - " + ex.Message;
         }
     }
 

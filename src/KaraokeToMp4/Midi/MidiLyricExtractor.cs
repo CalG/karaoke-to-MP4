@@ -106,9 +106,13 @@ public static class MidiLyricExtractor
                         pendingBreak = Math.Max(pendingBreak, 1);
                         break;
                     case '\r':
-                    case '\n':
                         Flush();
                         pendingBreak = Math.Max(pendingBreak, 1);
+                        break;
+                    case '\n':
+                        // RP-017: CR ends a line, LF starts a new paragraph (new screen).
+                        Flush();
+                        pendingBreak = 2;
                         break;
                     case '\0':
                         break;
@@ -137,12 +141,13 @@ public static class MidiLyricExtractor
             line.Syllables.Add(new LyricSyllable(TimeSpan.FromSeconds(time), TimeSpan.FromSeconds(end), text));
         }
 
-        // Drop whitespace-only lines, carrying a paragraph break forward to the next real line.
+        // Drop whitespace-only lines and legal notices (e.g. Tune 1000's "ALL rights reserved. Not for
+        // broadcast..." stored as lyrics at time 0), carrying a paragraph break forward to the next real line.
         bool carryParagraph = false;
         for (int i = 0; i < lyrics.Lines.Count; i++)
         {
             var l = lyrics.Lines[i];
-            if (string.IsNullOrWhiteSpace(l.Text))
+            if (string.IsNullOrWhiteSpace(l.Text) || IsNotice(l.Text))
             {
                 carryParagraph |= l.StartsParagraph;
                 lyrics.Lines.RemoveAt(i--);
@@ -151,6 +156,13 @@ public static class MidiLyricExtractor
             if (carryParagraph) { l.StartsParagraph = true; carryParagraph = false; }
         }
     }
+
+    private static readonly System.Text.RegularExpressions.Regex NoticePattern = new(
+        @"rights\s+reserved|not\s+for\s+(broadcast|rental|resale|sale)|transmission\s+of\s+any\s+kind|do\s+not\s+(duplicate|copy)|unauthori[sz]ed\s+(copying|duplication|use)|copyright|\(c\)\s*\d{4}|©|tune\s*1000",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>True for copyright/usage notices that some files embed among the lyrics.</summary>
+    public static bool IsNotice(string lineText) => NoticePattern.IsMatch(lineText);
 
     /// <summary>Decodes MIDI text as UTF-8 when valid, otherwise as Windows-1252/Latin-1.</summary>
     public static string DecodeText(byte[] data)

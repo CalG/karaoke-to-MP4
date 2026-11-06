@@ -74,7 +74,54 @@ public static class SongInfoCleaner
         // Only drop bracketed text that is packaging; keep real parts of a title like "(I Can't Get No) Satisfaction".
         t = Brackets.Replace(t, m => PackagingWord.IsMatch(m.Value) || Year.IsMatch(m.Value) ? "" : m.Value);
         t = Tidy(t);
+        if (FixAllCapsTitles) t = TitleCaseIfAllCaps(t);
         return t.Length is >= 1 and <= 100 && t.Any(char.IsLetterOrDigit) ? t : null;
+    }
+
+    /// <summary>
+    /// Convert titles written entirely in capitals ("TOO MUCH HEAVEN") to title case ("Too Much Heaven").
+    /// Default true. Artists are left as written, since names like "ABBA" or "AC/DC" are meant to be capitals.
+    /// </summary>
+    public static bool FixAllCapsTitles { get; set; } = true;
+
+    private static readonly HashSet<string> KeepUpper = new(StringComparer.Ordinal)
+    {
+        "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "OK", "USA", "UK", "DJ", "TV", "YMCA", "LA", "NYC", "MTV", "ABC", "SOS", "BMW",
+    };
+
+    private static readonly HashSet<string> SmallWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "a", "an", "and", "as", "at", "but", "by", "for", "in", "nor", "of", "on", "or", "the", "to", "vs", "de", "la", "el", "y",
+    };
+
+    /// <summary>"ALL AROUND THE WORLD" -> "All Around the World"; text with any lower-case letters is unchanged.</summary>
+    public static string TitleCaseIfAllCaps(string text)
+    {
+        if (!text.Any(char.IsLetter) || text.Any(char.IsLower)) return text;
+        var words = text.Split(' ');
+        for (int i = 0; i < words.Length; i++)
+        {
+            var w = words[i];
+            var core = new string(w.Where(char.IsLetter).ToArray());
+            if (core.Length == 0 || KeepUpper.Contains(core)) continue;
+            bool first = i == 0, last = i == words.Length - 1;
+            if (!first && !last && SmallWords.Contains(core)) { words[i] = w.ToLowerInvariant(); continue; }
+            // Capitalise the first letter (after any leading punctuation such as '(' or '"'), lower the rest,
+            // and capitalise after hyphens: "STAYIN'" -> "Stayin'", "HEY-HO" -> "Hey-Ho".
+            var chars = w.ToLowerInvariant().ToCharArray();
+            bool capNext = true;
+            for (int c = 0; c < chars.Length; c++)
+            {
+                if (char.IsLetter(chars[c]))
+                {
+                    if (capNext) chars[c] = char.ToUpperInvariant(chars[c]);
+                    capNext = false;
+                }
+                else if (chars[c] is '-' or '(' or '"' or '/') capNext = true;
+            }
+            words[i] = new string(chars);
+        }
+        return string.Join(' ', words);
     }
 
     /// <summary>

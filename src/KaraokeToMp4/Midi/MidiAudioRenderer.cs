@@ -26,7 +26,11 @@ public static class MidiAudioRenderer
         MeltySynth.MidiFile midi;
         try
         {
-            midi = new MeltySynth.MidiFile(midiPath);
+            // Re-encode through our tolerant parser first: many KAR files in the wild are truncated or
+            // slightly malformed, which the synthesiser's strict reader rejects outright.
+            var clean = StandardMidiFile.FromFile(midiPath).ToBytes();
+            using var ms = new MemoryStream(clean);
+            midi = new MeltySynth.MidiFile(ms);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

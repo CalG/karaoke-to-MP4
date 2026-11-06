@@ -482,3 +482,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Private copyrighted test files (see RealMediaTests)
+test-media/

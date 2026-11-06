@@ -75,6 +75,12 @@ public sealed class ConversionOptions
     /// <summary>Genre tag written to the MP4 (null or empty to omit). Default "Karaoke".</summary>
     public string? MetadataGenre { get; set; } = "Karaoke";
 
+    /// <summary>
+    /// Receives non-fatal warnings, e.g. "the file is truncated" for a damaged MIDI file that is still
+    /// converted as far as it goes. May be called from a worker thread.
+    /// </summary>
+    public Action<string>? OnWarning { get; set; }
+
     /// <summary>Overwrite the output file if it already exists. Default true.</summary>
     public bool Overwrite { get; set; } = true;
 

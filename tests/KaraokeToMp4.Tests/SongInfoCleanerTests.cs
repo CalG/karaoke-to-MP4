@@ -102,3 +102,53 @@ public class SongInfoCleanerLabelTests
         Assert.Equal(expected, KaraokeToMp4.Metadata.SongInfoCleaner.CleanArtist(raw, "Crazy"));
     }
 }
+
+/// <summary>Patterns seen in real Tune 1000 / KAR files (built synthetically; no copyrighted content).</summary>
+public class RealWorldPatternTests
+{
+    [Theory]
+    [InlineData("TOO MUCH HEAVEN                 ;Barry Gibb / Robin Gibb / Maurice Gibb", "Too Much Heaven")]
+    [InlineData("I WRITE THE SONGS               ;Words and music by Bruce Johnston", "I Write the Songs")]
+    [InlineData("WORDS                           ;Barry Gibb / Robin Gibb / Maurice Gibb", "Words")]
+    [InlineData("STAYIN' ALIVE ;x", "Stayin' Alive")]
+    public void Tune1000SequenceName_TitleBeforeSemicolon(string sequenceName, string expected)
+    {
+        var midi = new KaraokeToMp4.Midi.StandardMidiFile(TestFiles.MidiWithLyricsAndHeader(new[] { "Back Vocal" }, sequenceName, "la\r"));
+        var info = KaraokeToMp4.Metadata.SongInfoReader.FromMidi(midi);
+        Assert.Equal(expected, info.Title);
+        Assert.Null(info.Artist); // writers are not the performer
+    }
+
+    [Fact]
+    public void Tune1000Notice_IsNotShownAsLyrics_AndLineFeedStartsNewScreen()
+    {
+        var midi = new KaraokeToMp4.Midi.StandardMidiFile(TestFiles.MidiWithLyricsAndHeader(Array.Empty<string>(), "SONG ;w",
+            "ALL rights reserved. Not for broadcast or ", "\r", "transmission of any kind. ", "\r", "DO NOT DUPLICATE. NOT FOR RENTAL. ", "\r",
+            "\n", "First ", "line\r", "Second\r", "\n", "Next ", "verse\r"));
+        var lyrics = KaraokeToMp4.Midi.MidiLyricExtractor.Extract(midi);
+        Assert.Equal(new[] { "First line", "Second", "Next verse" }, lyrics.Lines.Select(l => l.Text.Trim()));
+        Assert.True(lyrics.Lines[0].StartsParagraph);
+        Assert.False(lyrics.Lines[1].StartsParagraph);
+        Assert.True(lyrics.Lines[2].StartsParagraph);
+    }
+
+    [Theory]
+    [InlineData("ALL AROUND THE WORLD", "All Around the World")]
+    [InlineData("HOW CAN YOU MEND A BROKEN HEART", "How Can You Mend a Broken Heart")]
+    [InlineData("AMOR DE HOMBRE", "Amor de Hombre")]
+    [InlineData("THE WAY YOU ARE", "The Way You Are")]          // small word first stays capitalised
+    [InlineData("ROCKY II THEME", "Rocky II Theme")]
+    [InlineData("Already Mixed Case", "Already Mixed Case")]
+    [InlineData("HEY-HO (LET'S GO)", "Hey-Ho (Let's Go)")]
+    public void AllCapsTitles_BecomeTitleCase(string raw, string expected)
+    {
+        Assert.Equal(expected, KaraokeToMp4.Metadata.SongInfoCleaner.CleanTitle(raw));
+    }
+
+    [Fact]
+    public void ArtistCapitalsAreKept()
+    {
+        Assert.Equal("ABBA", KaraokeToMp4.Metadata.SongInfoCleaner.CleanArtist("ABBA"));
+        Assert.Equal("Bryan Adams, Rod Stewart, and Sting", KaraokeToMp4.Metadata.SongInfoCleaner.CleanArtist("Recorded by Bryan Adams, Rod Stewart, and Sting"));
+    }
+}

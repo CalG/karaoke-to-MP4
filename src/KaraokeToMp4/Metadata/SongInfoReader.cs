@@ -24,6 +24,7 @@ public static class SongInfoReader
     {
         "words", "lyrics", "lyric", "melody", "vocal", "vocals", "voice", "untitled", "track", "track 1", "track 0",
         "tempo", "tempo track", "conductor", "control", "info", "information", "title", "artist", "song", "unknown",
+        "back vocal", "back vocals", "backing vocal", "backing vocals", "lead vocal", "lead vocals", "harmony", "chorus",
     };
 
     /// <summary>Reads song info from a KAR/MIDI file.</summary>
@@ -66,13 +67,19 @@ public static class SongInfoReader
             if (fromHeader != null) return fromHeader;
         }
 
-        var seqName = midi.Events
-            .Where(e => e.IsMeta && e.MetaType == StandardMidiFile.MetaTrackName && e.Track == 0)
-            .Select(e => Tidy(MidiLyricExtractor.DecodeText(e.Data)))
-            .FirstOrDefault(s => IsUsable(SongInfoCleaner.CleanTitle(s)));
-        return seqName != null
-            ? new SongInfo(SongInfoCleaner.CleanTitle(seqName), null, "MIDI sequence name", RawTitle: seqName)
-            : SongInfo.Empty;
+        // Sequence name of the first track. Tune 1000 style is "TITLE<padding>;Songwriter / Songwriter":
+        // the part after ';' lists the writers (not the performer), and the ';' itself shows the first part
+        // is the title, so it's trusted even when it is a word like "Words" that is usually a track label.
+        foreach (var e in midi.Events.Where(e => e.IsMeta && e.MetaType == StandardMidiFile.MetaTrackName && e.Track == 0))
+        {
+            var raw = MidiLyricExtractor.DecodeText(e.Data);
+            var parts = raw.Split(';');
+            var title = SongInfoCleaner.CleanTitle(Tidy(parts[0]));
+            bool tuneStyle = parts.Length > 1 && parts[1].Trim().Length > 0;
+            if (title != null && (tuneStyle ? IsUsable(title) || GenericNames.Contains(title) : IsUsable(title)))
+                return new SongInfo(title, null, "MIDI sequence name", RawTitle: Tidy(raw));
+        }
+        return SongInfo.Empty;
     }
 
     /// <summary>

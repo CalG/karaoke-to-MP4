@@ -49,6 +49,9 @@ public sealed class MidiKaraokeConverter
             throw new KaraokeConversionException($"'{midiPath}' is not a valid MIDI file.", ex);
         }
 
+        foreach (var problem in midi.Problems)
+            _options.OnWarning?.Invoke($"{Path.GetFileName(midiPath)}: {problem} The video may stop before the end of the song.");
+
         if (lyrics.Lines.Count == 0)
             throw new KaraokeConversionException($"'{midiPath}' does not contain any lyrics.");
 

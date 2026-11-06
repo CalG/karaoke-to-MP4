@@ -48,6 +48,19 @@ public sealed class StandardMidiFile
     /// <summary>Absolute tick of the last event in the file.</summary>
     public long LastTick { get; }
 
+    /// <summary>
+    /// Damage found while reading (truncated file, track without an end marker, garbage chunks).
+    /// The parser keeps everything readable up to the damage, so such files still convert, but the
+    /// song may stop early.
+    /// </summary>
+    public IReadOnlyList<string> Problems => _problems;
+
+    /// <summary>True when <see cref="Problems"/> is not empty.</summary>
+    public bool IsDamaged => _problems.Count > 0;
+
+    private readonly List<string> _problems = new();
+    private readonly short _division;
+
     public StandardMidiFile(byte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -69,6 +82,7 @@ public sealed class StandardMidiFile
         Format = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(pos + 8));
         int declaredTracks = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(pos + 10));
         short division = BinaryPrimitives.ReadInt16BigEndian(span.Slice(pos + 12));
+        _division = division;
         if (division < 0)
         {
             IsSmpte = true;
@@ -84,25 +98,44 @@ public sealed class StandardMidiFile
 
         var events = new List<MidiEvent>();
         int track = 0;
-        while (pos + 8 <= span.Length && track < Math.Max(declaredTracks, 1) + 64)
+        // Stop once every track the header declares has been read; some files carry a few stray bytes at the end.
+        while (pos + 8 <= span.Length && track < Math.Max(declaredTracks, 1))
         {
             var id = span.Slice(pos, 4);
-            int len = (int)Math.Min(BinaryPrimitives.ReadUInt32BigEndian(span.Slice(pos + 4)), (uint)(span.Length - pos - 8));
-            pos += 8;
-            if (id.SequenceEqual("MTrk"u8))
+            uint declared = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(pos + 4));
+            int len = (int)Math.Min(declared, (uint)(span.Length - pos - 8));
+            bool isTrack = id.SequenceEqual("MTrk"u8);
+            if (declared > (uint)len)
             {
-                ReadTrack(span.Slice(pos, len), track, events);
+                _problems.Add(isTrack
+                    ? $"Track {track + 1} needs {declared:N0} bytes but the file ends after {len:N0}: the file is truncated ({span.Length:N0} bytes)."
+                    : $"Unexpected data at byte {pos:N0}: the file is damaged from there on.");
+            }
+            pos += 8;
+            if (isTrack)
+            {
+                var trackEvents = new List<MidiEvent>();
+                bool complete = ReadTrack(span.Slice(pos, len), track, trackEvents);
+                if (!complete && declared <= (uint)len)
+                    _problems.Add($"Track {track + 1} has no End-of-Track marker (damaged track).");
+                if (!complete || declared > (uint)len)
+                    trackEvents = DropGarbageTail(trackEvents, division);
+                events.AddRange(trackEvents);
                 track++;
             }
             pos += len;
         }
         TrackCount = track;
+        if (declaredTracks > track)
+            _problems.Add($"The header lists {declaredTracks} tracks but only {track} were found.");
 
         // Stable sort by tick: List.Sort isn't stable, so sort with the original index as tiebreak.
         var indexed = events.Select((e, i) => (e, i)).ToList();
         indexed.Sort((a, b) => a.e.Tick != b.e.Tick ? a.e.Tick.CompareTo(b.e.Tick) : a.i.CompareTo(b.i));
         Events = indexed.Select(x => x.e).ToList();
-        LastTick = Events.Count == 0 ? 0 : Events[^1].Tick;
+        // Ignore End-of-Track markers: some files park one far past the music (e.g. 18 minutes into a
+        // 4-minute song), which would otherwise pad the video with silence.
+        LastTick = Events.Where(e => !(e.IsMeta && e.MetaType == MetaEndOfTrack)).Select(e => e.Tick).DefaultIfEmpty(0).Max();
         BuildTempoMap();
     }
 
@@ -144,7 +177,24 @@ public sealed class StandardMidiFile
         }
     }
 
-    private static void ReadTrack(ReadOnlySpan<byte> s, int track, List<MidiEvent> events)
+    /// <summary>
+    /// In a damaged track the bytes after the damage decode as nonsense, typically one enormous time gap
+    /// that would make the song last for hours. Keep events only up to the first gap longer than 64 beats.
+    /// </summary>
+    private static List<MidiEvent> DropGarbageTail(List<MidiEvent> trackEvents, short division)
+    {
+        long maxGap = division > 0 ? 64L * division : 30L * 25 * 40; // 64 beats, or ~30 s for SMPTE timing
+        long prev = 0;
+        for (int i = 0; i < trackEvents.Count; i++)
+        {
+            if (trackEvents[i].Tick - prev > maxGap) return trackEvents.GetRange(0, i);
+            prev = trackEvents[i].Tick;
+        }
+        return trackEvents;
+    }
+
+    /// <returns>True if the track ended with an End-of-Track event.</returns>
+    private static bool ReadTrack(ReadOnlySpan<byte> s, int track, List<MidiEvent> events)
     {
         int pos = 0;
         long tick = 0;
@@ -175,7 +225,7 @@ public sealed class StandardMidiFile
                 len = Math.Min(len, s.Length - pos);
                 events.Add(new MidiEvent(tick, track, status, type, s.Slice(pos, len).ToArray()));
                 pos += len;
-                if (type == MetaEndOfTrack) break;
+                if (type == MetaEndOfTrack) return true;
             }
             else if (status == 0xF0 || status == 0xF7)
             {
@@ -194,6 +244,74 @@ public sealed class StandardMidiFile
                 pos += dataLen;
             }
         }
+        return false;
+    }
+
+    /// <summary>
+    /// Writes the events back out as a clean, well-formed format-1 MIDI file (no running status, every
+    /// track closed with End-of-Track). Used to hand damaged files to the synthesiser.
+    /// </summary>
+    public byte[] ToBytes()
+    {
+        using var ms = new MemoryStream();
+        void U32(uint v) { ms.WriteByte((byte)(v >> 24)); ms.WriteByte((byte)(v >> 16)); ms.WriteByte((byte)(v >> 8)); ms.WriteByte((byte)v); }
+        void U16(int v) { ms.WriteByte((byte)(v >> 8)); ms.WriteByte((byte)v); }
+
+        int tracks = Math.Max(TrackCount, 1);
+        ms.Write("MThd"u8);
+        U32(6);
+        U16(tracks == 1 && Format == 0 ? 0 : 1);
+        U16(tracks);
+        U16(_division);
+
+        var byTrack = Events.GroupBy(e => e.Track).ToDictionary(g => g.Key, g => g.ToList());
+        for (int t = 0; t < tracks; t++)
+        {
+            var body = new List<byte>();
+            long last = 0;
+            long endTick = 0;
+            foreach (var e in byTrack.GetValueOrDefault(t) ?? new List<MidiEvent>())
+            {
+                if (e.IsMeta && e.MetaType == MetaEndOfTrack) continue; // re-added below, right after the last event
+                endTick = Math.Max(endTick, e.Tick);
+                bool system = e.Status >= 0xF0 && !e.IsMeta && e.Status is not (0xF0 or 0xF7);
+                if (system) continue; // stray system real-time/common bytes from damaged data
+
+                WriteVarLen(body, (int)Math.Min(e.Tick - last, 0x0FFFFFFF));
+                last = e.Tick;
+                body.Add(e.Status);
+                if (e.IsMeta)
+                {
+                    body.Add(e.MetaType);
+                    WriteVarLen(body, e.Data.Length);
+                    body.AddRange(e.Data);
+                }
+                else if (e.Status is 0xF0 or 0xF7)
+                {
+                    WriteVarLen(body, e.Data.Length);
+                    body.AddRange(e.Data);
+                }
+                else
+                {
+                    foreach (var b in e.Data) body.Add((byte)(b & 0x7F));
+                }
+            }
+            WriteVarLen(body, (int)Math.Min(endTick - last, 0x0FFFFFFF));
+            body.AddRange(new byte[] { 0xFF, MetaEndOfTrack, 0x00 });
+
+            ms.Write("MTrk"u8);
+            U32((uint)body.Count);
+            ms.Write(body.ToArray());
+        }
+        return ms.ToArray();
+    }
+
+    private static void WriteVarLen(List<byte> b, int value)
+    {
+        var tmp = new Stack<byte>();
+        tmp.Push((byte)(value & 0x7F));
+        while ((value >>= 7) > 0) tmp.Push((byte)((value & 0x7F) | 0x80));
+        b.AddRange(tmp);
     }
 
     private static bool TryReadVarLen(ReadOnlySpan<byte> s, ref int pos, out int value)

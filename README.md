@@ -103,6 +103,20 @@ string mp4 = await converter.ConvertNextToSourceAsync("SC8127-05.mp3"); // retur
 The CLI's `--info` option prints what was found (and, for MIDI files, the raw text events) without
 converting. `--keep-name` and `--no-metadata` turn the two features off.
 
+### Damaged files
+
+Many KAR collections contain truncated files (often cut at exactly 32 KB) or files with garbage at
+the end. These are still converted as far as the data goes: the damaged part is dropped and the
+synthesiser gets a cleaned-up copy. You're warned that the video may stop early: through
+`ConversionOptions.OnWarning`, in the CLI, and on the *File check* line in the Windows app.
+
+Other fixes from testing real files:
+* Tune 1000 files store a "rights reserved / not for broadcast" notice as lyrics at time 0; it is no
+  longer shown.
+* A line feed in lyric events starts a new screen (verse), as the MIDI lyric standard intends.
+* Tune 1000 sequence names are "TITLE ;Songwriters"; only the title is used.
+* Song length ignores End-of-Track markers placed far after the music.
+
 ### Downloading ffmpeg and SoundFonts
 
 Neither ffmpeg nor a SoundFont has to be installed by hand. When a conversion needs one that can't
@@ -248,6 +262,14 @@ dotnet run --project samples/KaraokeToMp4.WinForms
 dotnet test
 ```
 
-The tests build tiny synthetic CDG/KAR/MIDI files in code (no copyrighted media). The end-to-end
+The tests build tiny synthetic CDG/KAR/MIDI files in code (no copyrighted media).
+
+To also check a folder of real karaoke files that can't be committed (e.g. a clone of a private
+test-media repo), point `KARAOKE_TEST_MEDIA` at it. Every KAR/MIDI file is parsed and checked for a
+title, real lyrics (no copyright notices), a sensible length and a synthesisable MIDI stream:
+
+```bash
+KARAOKE_TEST_MEDIA=/path/to/karaoke-test-media dotnet test --filter RealMediaTests
+``` The end-to-end
 tests run real conversions when ffmpeg is installed; the KAR test also needs a SoundFont (set
 `KARAOKE_TEST_SOUNDFONT` or install `timgm6mb-soundfont` on Debian/Ubuntu).

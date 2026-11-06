@@ -107,7 +107,15 @@ if (infoOnly)
     if (fmt is KaraokeFormat.Kar or KaraokeFormat.MidiWithLyrics)
     {
         // Show the text the title/artist were picked from, to help diagnose unusual files.
-        var midi = KaraokeToMp4.Midi.StandardMidiFile.FromFile(input);
+        KaraokeToMp4.Midi.StandardMidiFile midi;
+        try { midi = KaraokeToMp4.Midi.StandardMidiFile.FromFile(input); }
+        catch (InvalidDataException ex)
+        {
+            Console.Error.WriteLine($"Not a valid MIDI file ({new FileInfo(input).Length} bytes): {ex.Message}");
+            return 1;
+        }
+        foreach (var problem in midi.Problems)
+            Console.WriteLine($"WARNING: {problem}");
         Console.WriteLine();
         Console.WriteLine("First text/name/copyright events (tick, track, type, text):");
         var names = new Dictionary<byte, string> { [0x01] = "Text", [0x02] = "Copyright", [0x03] = "Name", [0x05] = "Lyric" };
@@ -130,6 +138,8 @@ if (Path.GetFullPath(output) == Path.GetFullPath(input))
 }
 
 Console.WriteLine($"{input}  [{KaraokeConverter.DetectFormat(input)}]  ->  {output}");
+
+options.OnWarning = w => { Console.WriteLine(); Console.WriteLine($"WARNING: {w}"); };
 
 // Ask before downloading anything (only happens when ffmpeg or a SoundFont isn't installed).
 Task<bool> AskToDownload(string what, string why, int megabytes, string destination, string? licence = null)
