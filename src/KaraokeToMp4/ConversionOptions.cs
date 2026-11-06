@@ -61,6 +61,14 @@ public sealed class ConversionOptions
     /// <summary>Extra raw arguments inserted before the output file name (advanced).</summary>
     public string? ExtraFfmpegOutputArgs { get; set; }
 
+    /// <summary>
+    /// Write the song title and artist (read from the karaoke file) into the MP4's metadata. Default true.
+    /// </summary>
+    public bool WriteMetadata { get; set; } = true;
+
+    /// <summary>Genre tag written to the MP4 (null or empty to omit). Default "Karaoke".</summary>
+    public string? MetadataGenre { get; set; } = "Karaoke";
+
     /// <summary>Overwrite the output file if it already exists. Default true.</summary>
     public bool Overwrite { get; set; } = true;
 

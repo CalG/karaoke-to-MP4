@@ -89,8 +89,7 @@ internal sealed class MainForm : Form
         };
     }
 
-    private static string OutputPathFor(string input) =>
-        Path.Combine(Path.GetDirectoryName(input)!, Path.GetFileNameWithoutExtension(input) + ".mp4");
+    private SongInfo _songInfo = SongInfo.Empty;
 
     private void Browse()
     {
@@ -121,7 +120,12 @@ internal sealed class MainForm : Form
             _ => "not recognised (needs MP3+CDG, KAR or MIDI with lyrics)",
         };
         bool ok = format != KaraokeFormat.Unknown;
-        _outputLabel.Text = ok ? "Output: " + OutputPathFor(path) : "Output: -";
+        // Title/artist come from the file's own data (KAR @T, MIDI text, ID3 tags). They're appended to
+        // the output name when missing from it, and written into the MP4's metadata.
+        _songInfo = ok ? ReadSongInfo(path) : SongInfo.Empty;
+        if (ok && !_songInfo.IsEmpty)
+            _formatLabel.Text += $"    Song: {_songInfo.Title ?? "?"}  /  Artist: {_songInfo.Artist ?? "?"}";
+        _outputLabel.Text = ok ? "Output: " + _songInfo.SuggestOutputPath(path) : "Output: -";
         _convertButton.Enabled = ok;
         SetStatus(ok ? "Ready." : "This file can't be converted.");
     }
@@ -130,7 +134,8 @@ internal sealed class MainForm : Form
     {
         var input = _fileBox.Text;
         if (!File.Exists(input)) { SetStatus("File not found."); return; }
-        var output = OutputPathFor(input);
+        var output = _songInfo.SuggestOutputPath(input);
+        var songInfo = _songInfo;
 
         if (File.Exists(output) &&
             MessageBox.Show(this, $"{Path.GetFileName(output)} already exists. Replace it?", Text,
@@ -174,7 +179,7 @@ internal sealed class MainForm : Form
         {
             var token = _cts.Token;
             // Run off the UI thread so the window stays responsive while frames are rendered.
-            await Task.Run(() => new KaraokeConverter(options).ConvertAsync(input, output, progress, token), token);
+            await Task.Run(() => new KaraokeConverter(options).ConvertAsync(input, output, progress, token, songInfo), token);
             _lastOutput = output;
             _openFolderButton.Enabled = true;
             ShowProgress(1, $"Done in {stopwatch.Elapsed:m\\:ss}: {output}");
@@ -195,6 +200,19 @@ internal sealed class MainForm : Form
             _cts.Dispose();
             _cts = null;
             SetBusy(false);
+        }
+    }
+
+    private static SongInfo ReadSongInfo(string path)
+    {
+        try
+        {
+            // Reading tags is quick (no ffmpeg download is ever triggered here).
+            return Task.Run(() => new KaraokeConverter().ReadSongInfoAsync(path)).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            return SongInfo.Empty;
         }
     }
 

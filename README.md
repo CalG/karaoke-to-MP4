@@ -54,6 +54,38 @@ KaraokeFormat format = KaraokeConverter.DetectFormat("song.mid"); // Kar / MidiW
 All conversions accept a `CancellationToken`. Failures are reported as `KaraokeConversionException`
 (including ffmpeg's error output).
 
+### Song title, artist and output names
+
+The title and artist are read from the file's own data:
+
+| Input | Where they come from |
+|---|---|
+| KAR | `@T` lines: first = title, second = artist (Soft Karaoke convention) |
+| MIDI with lyrics (e.g. Tune 1000) | Text events before the first lyric (title, then artist); else the sequence name as title |
+| MP3+CDG / zip | The MP3's ID3 tags (v1, v2.2-2.4); other audio formats via ffprobe |
+
+Copyright notices, sequencer credits, web addresses and generic names ("Words", "Untitled", ...) are skipped.
+
+* **MP4 metadata:** title, artist and `genre=Karaoke` are written into the MP4
+  (`WriteMetadata`, `MetadataGenre`).
+* **Output name:** `SuggestOutputPathAsync` / `ConvertNextToSourceAsync` keep the source name and append the
+  artist and/or title only if the name doesn't already contain them. The check ignores case,
+  punctuation, accents, a leading "The", "&" vs "and" and bracketed extras such as "(Remastered)":
+
+  | Source | Title / Artist in file | MP4 |
+  |---|---|---|
+  | `SC8127-05.mp3` | Yesterday / The Beatles | `SC8127-05 - The Beatles - Yesterday.mp4` |
+  | `Yesterday.kar` | Yesterday / The Beatles | `Yesterday - The Beatles.mp4` |
+  | `beatles_yesterday.cdg` | Yesterday / The Beatles | `beatles_yesterday.mp4` |
+
+```csharp
+SongInfo info = await converter.ReadSongInfoAsync("song.kar");        // Title, Artist, Source
+string mp4 = await converter.ConvertNextToSourceAsync("SC8127-05.mp3"); // returns the path it wrote
+```
+
+The CLI's `--info` option prints what was found (and, for MIDI files, the raw text events) without
+converting. `--keep-name` and `--no-metadata` turn the two features off.
+
 ### Downloading ffmpeg and SoundFonts
 
 Neither ffmpeg nor a SoundFont has to be installed by hand. When a conversion needs one that can't
@@ -160,7 +192,10 @@ before downloading it (`--yes` skips the question).
 1. Click **Browse...** (or drag a file onto the window) and pick an `.mp3`/`.cdg`/`.zip`, `.kar` or `.mid`.
    The detected format and the output path are shown.
 2. Click **Convert to MP4**. The video is written **next to the source file** with the same name,
-   e.g. `C:\Karaoke\Song.mp3` becomes `C:\Karaoke\Song.mp4`. You're asked before an existing file is replaced.
+   plus the artist/title from the file if the name doesn't already contain them, e.g.
+   `C:\Karaoke\SC8127-05.mp3` becomes `C:\Karaoke\SC8127-05 - The Beatles - Yesterday.mp4`.
+   The detected song and artist are shown before converting and written into the MP4's metadata.
+   You're asked before an existing file is replaced.
 3. A progress bar shows downloading, synthesis and encoding. **Cancel** stops the conversion, and
    **Open Folder** shows the finished MP4 in Explorer.
 

@@ -36,7 +36,8 @@ internal sealed class FfmpegVideoWriter : IAsyncDisposable
         int frameHeight,
         string audioPath,
         string outputPath,
-        string? videoFilter)
+        string? videoFilter,
+        SongInfo? songInfo = null)
     {
         var args = new List<string>
         {
@@ -69,8 +70,16 @@ internal sealed class FfmpegVideoWriter : IAsyncDisposable
             "-c:a", options.AudioCodec,
             "-b:a", $"{options.AudioBitrateKbps}k",
             "-movflags", "+faststart",
+            // Don't carry over tags from the inputs; only the ones set below.
+            "-map_metadata", "-1",
             "-shortest",
         });
+
+        foreach (var (key, value) in MetadataFor(options, songInfo))
+        {
+            args.Add("-metadata");
+            args.Add($"{key}={value}");
+        }
 
         if (!string.IsNullOrWhiteSpace(options.ExtraFfmpegOutputArgs))
             args.AddRange(SplitArgs(options.ExtraFfmpegOutputArgs));
@@ -174,6 +183,17 @@ internal sealed class FfmpegVideoWriter : IAsyncDisposable
         lock (_stderrLock)
             return _stderrTail.Count == 0 ? "(no output)" : string.Join(Environment.NewLine, _stderrTail);
     }
+
+    /// <summary>MP4 tags written for a song (title/artist/genre).</summary>
+    internal static IEnumerable<(string Key, string Value)> MetadataFor(ConversionOptions options, SongInfo? info)
+    {
+        if (!options.WriteMetadata) yield break;
+        if (info?.HasTitle == true) yield return ("title", OneLine(info.Title!));
+        if (info?.HasArtist == true) yield return ("artist", OneLine(info.Artist!));
+        if (!string.IsNullOrWhiteSpace(options.MetadataGenre)) yield return ("genre", OneLine(options.MetadataGenre));
+    }
+
+    private static string OneLine(string s) => string.Join(' ', s.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)).Trim();
 
     internal static IEnumerable<string> SplitArgs(string commandLine)
     {

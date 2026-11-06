@@ -30,7 +30,8 @@ public sealed class MidiKaraokeConverter
         string midiPath,
         string outputPath,
         IProgress<ConversionProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SongInfo? songInfo = null)
     {
         _options.Validate();
         if (!File.Exists(midiPath)) throw new FileNotFoundException("MIDI file not found.", midiPath);
@@ -51,10 +52,18 @@ public sealed class MidiKaraokeConverter
         if (lyrics.Lines.Count == 0)
             throw new KaraokeConversionException($"'{midiPath}' does not contain any lyrics.");
 
+        songInfo ??= Metadata.SongInfoReader.FromMidi(midi);
         if (!string.IsNullOrWhiteSpace(_options.Title))
         {
             lyrics.TitleLines.Clear();
             lyrics.TitleLines.AddRange(_options.Title.Split('\n').Select(s => s.Trim()).Where(s => s.Length > 0));
+        }
+        else if (songInfo.HasTitle)
+        {
+            // Title card shows the clean title/artist rather than every @T line.
+            lyrics.TitleLines.Clear();
+            lyrics.TitleLines.Add(songInfo.Title!);
+            if (songInfo.HasArtist) lyrics.TitleLines.Add(songInfo.Artist!);
         }
         else if (lyrics.TitleLines.Count == 0)
         {
@@ -104,7 +113,7 @@ public sealed class MidiKaraokeConverter
             using var renderer = new LyricFrameRenderer(_options, plan, lyrics.TitleLines);
             var frame = new byte[_options.Width * _options.Height * 4];
 
-            await using var writer = FfmpegVideoWriter.Start(_options, tools, _options.Width, _options.Height, audioPath, outputPath, videoFilter: null);
+            await using var writer = FfmpegVideoWriter.Start(_options, tools, _options.Width, _options.Height, audioPath, outputPath, videoFilter: null, songInfo);
             for (long n = 0; n < totalFrames; n++)
             {
                 cancellationToken.ThrowIfCancellationRequested();

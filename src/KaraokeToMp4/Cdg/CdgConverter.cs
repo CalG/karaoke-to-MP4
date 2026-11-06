@@ -24,7 +24,8 @@ public sealed class CdgConverter
         string cdgPath,
         string outputPath,
         IProgress<ConversionProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SongInfo? songInfo = null)
     {
         _options.Validate();
         if (!File.Exists(audioPath)) throw new FileNotFoundException("Audio file not found.", audioPath);
@@ -32,6 +33,7 @@ public sealed class CdgConverter
 
         progress?.Report(new ConversionProgress(ConversionStage.Preparing, TimeSpan.Zero, TimeSpan.Zero));
         var tools = await MediaProbe.ResolveToolsAsync(_options, cancellationToken).ConfigureAwait(false);
+        songInfo ??= await Metadata.SongInfoReader.FromAudioAsync(audioPath, tools, cancellationToken).ConfigureAwait(false);
 
         var decoder = CdgDecoder.FromFile(cdgPath);
         if (decoder.PacketCount == 0)
@@ -52,7 +54,7 @@ public sealed class CdgConverter
             $"scale={_options.Width}:{_options.Height}:force_original_aspect_ratio=decrease:flags={_options.CdgScaleAlgorithm}," +
             $"pad={_options.Width}:{_options.Height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1";
 
-        await using var writer = FfmpegVideoWriter.Start(_options, tools, frameW, frameH, audioPath, outputPath, filter);
+        await using var writer = FfmpegVideoWriter.Start(_options, tools, frameW, frameH, audioPath, outputPath, filter, songInfo);
         for (long n = 0; n < totalFrames; n++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -75,7 +77,8 @@ public sealed class CdgConverter
         string zipPath,
         string outputPath,
         IProgress<ConversionProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SongInfo? songInfo = null)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "karaoke-to-mp4-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -101,7 +104,7 @@ public sealed class CdgConverter
                 cdgEntry.ExtractToFile(cdg);
                 audioEntry.ExtractToFile(audio);
             }
-            await ConvertAsync(audio, cdg, outputPath, progress, cancellationToken).ConfigureAwait(false);
+            await ConvertAsync(audio, cdg, outputPath, progress, cancellationToken, songInfo).ConfigureAwait(false);
         }
         finally
         {

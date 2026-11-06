@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using KaraokeToMp4.Cdg;
+using KaraokeToMp4.Metadata;
 using KaraokeToMp4.Midi;
+using KaraokeToMp4.Video;
 
 namespace KaraokeToMp4;
 
@@ -69,6 +71,50 @@ public sealed class KaraokeConverter
     }
 
     /// <summary>
+    /// Reads the song title and artist from the file's own data: KAR "@T" tags, MIDI text events or
+    /// sequence name, or the MP3's ID3 tags (other audio formats need ffprobe). Never downloads anything;
+    /// returns <see cref="SongInfo.Empty"/> when nothing usable is found.
+    /// </summary>
+    public Task<SongInfo> ReadSongInfoAsync(string inputPath, CancellationToken cancellationToken = default)
+    {
+        FfmpegTools? tools = null;
+        if (!string.IsNullOrWhiteSpace(_options.FfmpegPath))
+        {
+            var dir = Path.GetDirectoryName(_options.FfmpegPath);
+            var probe = _options.FfprobePath
+                        ?? (string.IsNullOrEmpty(dir) ? "ffprobe" : Path.Combine(dir, "ffprobe" + Path.GetExtension(_options.FfmpegPath)));
+            tools = new FfmpegTools(_options.FfmpegPath, probe);
+        }
+        tools ??= FfmpegLocator.TryLocate();
+        return SongInfoReader.ReadAsync(inputPath, tools, cancellationToken);
+    }
+
+    /// <summary>
+    /// Suggests where to save the MP4: next to the input, keeping its name and appending the artist and/or
+    /// title when the name doesn't already contain them (see <see cref="SongInfo.SuggestOutputPath"/>).
+    /// </summary>
+    public async Task<string> SuggestOutputPathAsync(string inputPath, CancellationToken cancellationToken = default)
+    {
+        var info = await ReadSongInfoAsync(inputPath, cancellationToken).ConfigureAwait(false);
+        return info.SuggestOutputPath(inputPath);
+    }
+
+    /// <summary>
+    /// Converts <paramref name="inputPath"/> to an MP4 next to it, named by <see cref="SuggestOutputPathAsync"/>.
+    /// </summary>
+    /// <returns>The path of the MP4 that was written.</returns>
+    public async Task<string> ConvertNextToSourceAsync(
+        string inputPath,
+        IProgress<ConversionProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var info = await ReadSongInfoAsync(inputPath, cancellationToken).ConfigureAwait(false);
+        var output = info.SuggestOutputPath(inputPath);
+        await ConvertAsync(inputPath, output, progress, cancellationToken, info).ConfigureAwait(false);
+        return output;
+    }
+
+    /// <summary>
     /// Converts any supported karaoke file to MP4.
     /// </summary>
     /// <param name="inputPath">
@@ -76,11 +122,13 @@ public sealed class KaraokeConverter
     /// a .kar file, or a .mid/.midi file with lyrics.
     /// </param>
     /// <param name="outputPath">Where to write the .mp4.</param>
+    /// <param name="songInfo">Title/artist for the MP4 tags; read from the file when null.</param>
     public Task ConvertAsync(
         string inputPath,
         string outputPath,
         IProgress<ConversionProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SongInfo? songInfo = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(inputPath);
         ArgumentException.ThrowIfNullOrEmpty(outputPath);
@@ -91,20 +139,20 @@ public sealed class KaraokeConverter
         switch (format)
         {
             case KaraokeFormat.Mp3Cdg when ext == ".zip":
-                return new CdgConverter(_options).ConvertZipAsync(inputPath, outputPath, progress, cancellationToken);
+                return new CdgConverter(_options).ConvertZipAsync(inputPath, outputPath, progress, cancellationToken, songInfo);
 
             case KaraokeFormat.Mp3Cdg when ext == ".cdg":
                 var audio = CdgConverter.FindAudioForCdg(inputPath)
                     ?? throw new KaraokeConversionException($"No audio file found next to '{inputPath}'.");
-                return new CdgConverter(_options).ConvertAsync(audio, inputPath, outputPath, progress, cancellationToken);
+                return new CdgConverter(_options).ConvertAsync(audio, inputPath, outputPath, progress, cancellationToken, songInfo);
 
             case KaraokeFormat.Mp3Cdg:
                 var cdg = CdgConverter.FindCdgForAudio(inputPath)!;
-                return new CdgConverter(_options).ConvertAsync(inputPath, cdg, outputPath, progress, cancellationToken);
+                return new CdgConverter(_options).ConvertAsync(inputPath, cdg, outputPath, progress, cancellationToken, songInfo);
 
             case KaraokeFormat.Kar:
             case KaraokeFormat.MidiWithLyrics:
-                return new MidiKaraokeConverter(_options).ConvertAsync(inputPath, outputPath, progress, cancellationToken);
+                return new MidiKaraokeConverter(_options).ConvertAsync(inputPath, outputPath, progress, cancellationToken, songInfo);
 
             default:
                 throw new KaraokeConversionException($"'{inputPath}' is not a supported karaoke file (MP3+CDG, KAR or MIDI with lyrics).");

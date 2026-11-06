@@ -99,6 +99,58 @@ public class EndToEndTests
     }
 
     [Fact]
+    public async Task Mp3Cdg_TaggedMp3_NamesFileAndWritesMetadata()
+    {
+        if (!HasFfmpeg) return;
+        using var dir = new TempDir();
+        var mp3 = dir.File("SC1234-05.mp3");
+        MakeTone(mp3, 2, "-metadata", "title=Crazy", "-metadata", "artist=Patsy Cline");
+        TestFiles.WriteTemp(dir.Path, "SC1234-05.cdg", TestFiles.SimpleCdg(2));
+
+        var output = await new KaraokeConverter(SmallOptions()).ConvertNextToSourceAsync(mp3);
+
+        Assert.Equal(dir.File("SC1234-05 - Patsy Cline - Crazy.mp4"), output);
+        var tags = Tags(output);
+        Assert.Contains("title=Crazy", tags);
+        Assert.Contains("artist=Patsy Cline", tags);
+        Assert.Contains("genre=Karaoke", tags);
+    }
+
+    [Fact]
+    public async Task Kar_TitleArtistGoIntoMetadata()
+    {
+        if (!HasFfmpeg) return;
+        using var dir = new TempDir();
+        var kar = TestFiles.WriteTemp(dir.Path, "Yesterday.kar", TestFiles.KarWithTags(new[] { "Yesterday", "The Beatles" }, "\\Yes", "ter", "day"));
+        var wav = dir.File("backing.wav");
+        MakeTone(wav, 3);
+        var options = SmallOptions();
+        options.MidiAudioOverridePath = wav;
+
+        var output = await new KaraokeConverter(options).ConvertNextToSourceAsync(kar);
+
+        Assert.Equal(dir.File("Yesterday - The Beatles.mp4"), output);
+        var tags = Tags(output);
+        Assert.Contains("title=Yesterday", tags);
+        Assert.Contains("artist=The Beatles", tags);
+    }
+
+    [Fact]
+    public async Task NoMetadataOption_WritesNoTags()
+    {
+        if (!HasFfmpeg) return;
+        using var dir = new TempDir();
+        var mp3 = dir.File("S.mp3");
+        MakeTone(mp3, 1, "-metadata", "title=Hidden");
+        TestFiles.WriteTemp(dir.Path, "S.cdg", TestFiles.SimpleCdg(1));
+        var options = SmallOptions();
+        options.WriteMetadata = false;
+
+        await new KaraokeConverter(options).ConvertAsync(mp3, dir.File("out.mp4"));
+        Assert.DoesNotContain("title=", Tags(dir.File("out.mp4")));
+    }
+
+    [Fact]
     public async Task Cancellation_StopsConversion()
     {
         if (!HasFfmpeg) return;
@@ -119,11 +171,21 @@ public class EndToEndTests
         public void Report(ConversionProgress value) => report(value);
     }
 
-    private static void MakeTone(string path, int seconds)
+    private static void MakeTone(string path, int seconds, params string[] extraArgs)
     {
-        var (code, _) = Run("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
-            "-i", $"sine=frequency=440:duration={seconds}", path);
+        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+            "-i", $"sine=frequency=440:duration={seconds}" };
+        args.AddRange(extraArgs);
+        args.Add(path);
+        var (code, _) = Run("ffmpeg", args.ToArray());
         Assert.Equal(0, code);
+    }
+
+    private static string Tags(string mp4)
+    {
+        var (code, output) = Run("ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "default=nw=1", mp4);
+        Assert.Equal(0, code);
+        return output.Replace("TAG:", "");
     }
 
     private static void AssertValidMp4(string path, int width, int height, double expectedSeconds)

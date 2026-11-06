@@ -26,13 +26,20 @@ if (args.Length == 0 || args.Contains("-h") || args.Contains("--help"))
           --title <text>           Title card text for MIDI/KAR
           --crop-border            Hide the CDG border area
           --smooth                 Smooth (lanczos) CDG upscaling instead of blocky pixels
+          --keep-name              Don't append artist/title to the output name
+          --no-metadata            Don't write title/artist tags into the MP4
+          --info                   Only show the song title/artist found in the file (and, for MIDI,
+                                   the raw text events) without converting
+
+        Without an output path, the MP4 is saved next to the input. The artist and title read from the
+        file are appended to the name when it doesn't already contain them.
         """);
     return args.Length == 0 ? 1 : 0;
 }
 
 var options = new ConversionOptions();
 string? input = null, output = null;
-bool assumeYes = false;
+bool assumeYes = false, keepName = false, infoOnly = false;
 
 try
 {
@@ -57,6 +64,9 @@ try
             case "--crop-border": options.CdgCropBorder = true; break;
             case "--yes": case "-y": assumeYes = true; break;
             case "--smooth": options.CdgScaleAlgorithm = "lanczos"; break;
+            case "--keep-name": keepName = true; break;
+            case "--no-metadata": options.WriteMetadata = false; break;
+            case "--info": infoOnly = true; break;
             case "--font":
                 var f = Next();
                 if (File.Exists(f)) options.FontPath = f; else options.FontFamily = f;
@@ -77,7 +87,35 @@ catch (Exception ex) when (ex is ArgumentException or FormatException)
 }
 
 if (input == null) { Console.Error.WriteLine("No input file given."); return 1; }
-output ??= Path.ChangeExtension(input, ".mp4");
+if (!File.Exists(input)) { Console.Error.WriteLine($"File not found: {input}"); return 1; }
+
+var converter = new KaraokeConverter(options);
+var songInfo = await converter.ReadSongInfoAsync(input);
+Console.WriteLine($"Title:  {songInfo.Title ?? "(not found)"}");
+Console.WriteLine($"Artist: {songInfo.Artist ?? "(not found)"}" + (songInfo.Source != null ? $"   [from {songInfo.Source}]" : ""));
+
+if (infoOnly)
+{
+    var fmt = KaraokeConverter.DetectFormat(input);
+    if (fmt is KaraokeFormat.Kar or KaraokeFormat.MidiWithLyrics)
+    {
+        // Show the text the title/artist were picked from, to help diagnose unusual files.
+        var midi = KaraokeToMp4.Midi.StandardMidiFile.FromFile(input);
+        Console.WriteLine();
+        Console.WriteLine("First text/name/copyright events (tick, track, type, text):");
+        var names = new Dictionary<byte, string> { [0x01] = "Text", [0x02] = "Copyright", [0x03] = "Name", [0x05] = "Lyric" };
+        foreach (var e in midi.Events.Where(e => e.IsMeta && names.ContainsKey(e.MetaType)).Take(40))
+        {
+            var text = KaraokeToMp4.Midi.MidiLyricExtractor.DecodeText(e.Data).Replace("\r", "\\r").Replace("\n", "\\n");
+            Console.WriteLine($"  {e.Tick,8} {e.Track,3} {names[e.MetaType],-9} {text}");
+        }
+    }
+    Console.WriteLine();
+    Console.WriteLine($"Suggested output: {songInfo.SuggestOutputPath(input)}");
+    return 0;
+}
+
+output ??= keepName ? Path.ChangeExtension(input, ".mp4") : songInfo.SuggestOutputPath(input);
 if (Path.GetFullPath(output) == Path.GetFullPath(input))
 {
     Console.Error.WriteLine("Output path would overwrite the input.");
@@ -123,7 +161,7 @@ var progress = new Progress<ConversionProgress>(p =>
 
 try
 {
-    await new KaraokeConverter(options).ConvertAsync(input, output, progress, cts.Token);
+    await converter.ConvertAsync(input, output, progress, cts.Token, songInfo);
     Console.WriteLine();
     Console.WriteLine("Done.");
     return 0;

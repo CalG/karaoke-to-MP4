@@ -127,14 +127,13 @@ internal static class TestFiles
     }));
 
     /// <summary>A KAR file. Syllables are one quarter note (0.5 s) apart, starting at 1 s.</summary>
-    public static byte[] Kar(params string[] syllables)
+    public static byte[] Kar(params string[] syllables) => KarWithTags(new[] { "Test Song", "Test Artist" }, syllables);
+
+    /// <summary>A KAR file with the given @T lines.</summary>
+    public static byte[] KarWithTags(string[] titleTags, params string[] syllables)
     {
-        var words = new List<(int, byte[])>
-        {
-            (0, Meta(0x01, "@KMIDI KARAOKE FILE")),
-            (0, Meta(0x01, "@TTest Song")),
-            (0, Meta(0x01, "@TTest Artist")),
-        };
+        var words = new List<(int, byte[])> { (0, Meta(0x01, "@KMIDI KARAOKE FILE")) };
+        foreach (var t in titleTags) words.Add((0, Meta(0x01, "@T" + t)));
         for (int i = 0; i < syllables.Length; i++)
             words.Add((i == 0 ? 960 : 480, Meta(0x01, syllables[i])));
 
@@ -142,12 +141,19 @@ internal static class TestFiles
     }
 
     /// <summary>A MIDI file with Lyric (0x05) meta events, using CR for line breaks.</summary>
-    public static byte[] MidiWithLyrics(params string[] syllables)
+    public static byte[] MidiWithLyrics(params string[] syllables) => MidiWithLyricsAndHeader(Array.Empty<string>(), "Lyric Song", syllables);
+
+    /// <summary>
+    /// Like <see cref="MidiWithLyrics"/> but with Text events at tick 0 of the lyric track (the way many
+    /// commercial lyric MIDI files store title/artist/copyright) and a chosen sequence name.
+    /// </summary>
+    public static byte[] MidiWithLyricsAndHeader(string[] headerTexts, string sequenceName, params string[] syllables)
     {
         var lyrics = new List<(int, byte[])>();
+        foreach (var h in headerTexts) lyrics.Add((0, Meta(0x01, h)));
         for (int i = 0; i < syllables.Length; i++)
             lyrics.Add((i == 0 ? 960 : 480, Meta(0x05, syllables[i])));
-        return Midi(480, ConductorTrack("Lyric Song"), NoteTrack(syllables.Length + 2), Track(lyrics));
+        return Midi(480, ConductorTrack(sequenceName), NoteTrack(syllables.Length + 2), Track(lyrics));
     }
 
     public static string WriteTemp(string dir, string name, byte[] data)
