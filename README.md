@@ -266,7 +266,8 @@ The tests build tiny synthetic CDG/KAR/MIDI files in code (no copyrighted media)
 
 To also check a folder of real karaoke files that can't be committed (e.g. a clone of a private
 test-media repo), point `KARAOKE_TEST_MEDIA` at it. Every KAR/MIDI file is parsed and checked for a
-title, real lyrics (no copyright notices), a sensible length and a synthesisable MIDI stream:
+title, real lyrics (no copyright notices), a sensible length and a synthesisable MIDI stream; every
+`.cdg` is checked for a matching audio file and real graphics:
 
 ```bash
 KARAOKE_TEST_MEDIA=/path/to/karaoke-test-media dotnet test --filter RealMediaTests
