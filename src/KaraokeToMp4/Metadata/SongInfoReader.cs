@@ -135,7 +135,7 @@ public static class SongInfoReader
 
                 case KaraokeFormat.Mp3Cdg:
                     var ext = Path.GetExtension(inputPath).ToLowerInvariant();
-                    if (ext == ".zip") return FromZip(inputPath);
+                    if (ext != ".cdg" && ArchiveSniffer.IsZip(inputPath)) return FromZip(inputPath);
                     var audio = ext == ".cdg" ? CdgConverter.FindAudioForCdg(inputPath) : inputPath;
                     return audio == null ? SongInfo.Empty : await FromAudioAsync(audio, tools, ct).ConfigureAwait(false);
             }

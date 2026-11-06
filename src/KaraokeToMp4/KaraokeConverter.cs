@@ -43,14 +43,7 @@ public sealed class KaraokeConverter
             case ".kar":
                 return KaraokeFormat.Kar;
             case ".zip":
-                try
-                {
-                    using var zip = ZipFile.OpenRead(path);
-                    return zip.Entries.Any(e => e.Name.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase))
-                        ? KaraokeFormat.Mp3Cdg
-                        : KaraokeFormat.Unknown;
-                }
-                catch (InvalidDataException) { return KaraokeFormat.Unknown; }
+                return ZipHasCdg(path);
             case ".mid":
             case ".midi":
             case ".rmi":
@@ -64,6 +57,9 @@ public sealed class KaraokeConverter
                 }
                 catch (InvalidDataException) { return KaraokeFormat.Unknown; }
         }
+
+        // A zip with a custom extension (e.g. ".mp3gz"), recognised by its content.
+        if (ArchiveSniffer.IsZip(path)) return ZipHasCdg(path);
 
         if (CdgConverter.AudioExtensions.Contains(ext) && CdgConverter.FindCdgForAudio(path) != null)
             return KaraokeFormat.Mp3Cdg;
@@ -140,7 +136,7 @@ public sealed class KaraokeConverter
         var ext = Path.GetExtension(inputPath).ToLowerInvariant();
         switch (format)
         {
-            case KaraokeFormat.Mp3Cdg when ext == ".zip":
+            case KaraokeFormat.Mp3Cdg when ext != ".cdg" && ArchiveSniffer.IsZip(inputPath):
                 return new CdgConverter(_options).ConvertZipAsync(inputPath, outputPath, progress, cancellationToken, songInfo);
 
             case KaraokeFormat.Mp3Cdg when ext == ".cdg":
@@ -159,6 +155,18 @@ public sealed class KaraokeConverter
             default:
                 throw new KaraokeConversionException(DescribeUnsupported(inputPath));
         }
+    }
+
+    private static KaraokeFormat ZipHasCdg(string path)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(path);
+            return zip.Entries.Any(e => e.Name.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase))
+                ? KaraokeFormat.Mp3Cdg
+                : KaraokeFormat.Unknown;
+        }
+        catch (InvalidDataException) { return KaraokeFormat.Unknown; }
     }
 
     /// <summary>Explains why <paramref name="path"/> can't be converted, e.g. "plain MIDI file with no lyrics".</summary>

@@ -340,28 +340,25 @@ internal sealed class MainForm : Form
                 var before = (SongHealth)item.Tag!;
                 SetStatus($"Fixing {before.FileName}...");
 
-                SongHealth after;
+                IReadOnlyList<SongHealth> results;
                 try
                 {
-                    after = await Task.Run(() => SongHealthChecker.Repair(before.Path, keepBackups));
-                    if (after.Status == SongHealthStatus.NoIssues)
-                    {
-                        repaired++;
-                        after = after with { Summary = "Repaired. " + after.Summary };
-                    }
-                    else
-                    {
-                        failed++;
-                    }
+                    // Usually one result; a zip holding several songs is split into one zip per song.
+                    var after = await Task.Run(() => SongHealthChecker.RepairAll(before.Path, keepBackups));
+                    bool split = after.Count > 1;
+                    results = after.Select(r => r.Status == SongHealthStatus.NoIssues
+                        ? r with { Summary = (split ? $"Split from {before.FileName}. " : "Repaired. ") + r.Summary }
+                        : r).ToList();
+                    if (after.All(r => r.Status != SongHealthStatus.Repairable)) repaired++; else failed++;
                 }
                 catch (Exception ex)
                 {
                     failed++;
-                    after = before with { Summary = "Repair failed: " + ex.Message };
+                    results = new[] { before with { Summary = "Repair failed: " + ex.Message } };
                 }
 
                 view.Items.Remove(item);
-                AddResult(after);
+                foreach (var r in results) AddResult(r);
                 _progress.Value++;
                 UpdateTabTitles();
             }

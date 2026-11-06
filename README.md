@@ -298,7 +298,8 @@ What is checked:
 | Song | Checks |
 |---|---|
 | `.cdg` + audio | audio present and not empty; every graphics packet checked with the CD+G error-correction data |
-| `.zip` (MP3+G) | the same, inside the zip (repairs rewrite the zip) |
+| `.zip` (MP3+G) | the same, inside the zip (repairs rewrite the zip); **one song per zip**: a zip holding several songs is listed as repairable, and Fix splits it into one zip per song (named after each song, same extension) |
+| archives with other extensions | recognised by content, so a zip renamed to e.g. `.mp3gz` is checked (and converted) like a `.zip`; GZip/7-Zip/RAR files are listed under *Cannot repair* with their extension |
 | `.kar` / `.mid` | valid MIDI, has lyrics, not cut off, no malformed events |
 | audio files (.mp3, .ogg, .wav, ...) | has a matching `.cdg` (otherwise listed as missing lyrics) |
 
