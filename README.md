@@ -116,6 +116,10 @@ Other fixes from testing real files:
 * A line feed in lyric events starts a new screen (verse), as the MIDI lyric standard intends.
 * Tune 1000 sequence names are "TITLE ;Songwriters"; only the title is used.
 * Song length ignores End-of-Track markers placed far after the music.
+* Malformed text events (e.g. a lyric whose length byte is too small) are skipped and reading resumes
+  at the next event, instead of losing the rest of the track. These are reported as notes, not damage.
+* Catalogue codes on titles ("Song - CP000015", "Song [SC8127-05]") are removed.
+* Plain MIDI files without lyrics are rejected with a clear "no lyrics" message.
 
 ### Downloading ffmpeg and SoundFonts
 

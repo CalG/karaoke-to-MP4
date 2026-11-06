@@ -77,6 +77,13 @@ public class RealMediaTests
         var path = Path.Combine(Environment.GetEnvironmentVariable("KARAOKE_TEST_MEDIA")!, relativePath);
         if (new FileInfo(path).Length == 0) return; // empty placeholder / failed upload: nothing to test
 
+        // Plain MIDI files (music only) are allowed in the collection; they must be reported as such.
+        if (KaraokeConverter.DetectFormat(path) == KaraokeFormat.Unknown)
+        {
+            Assert.Contains("no lyrics", KaraokeConverter.DescribeUnsupported(path));
+            return;
+        }
+
         var midi = StandardMidiFile.FromFile(path);
         var lyrics = MidiKaraokeConverter.ReadLyrics(path);
         var info = KaraokeToMp4.Metadata.SongInfoReader.FromMidi(midi);

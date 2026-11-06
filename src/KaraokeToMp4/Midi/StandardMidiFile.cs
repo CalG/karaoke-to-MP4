@@ -58,6 +58,14 @@ public sealed class StandardMidiFile
     /// <summary>True when <see cref="Problems"/> is not empty.</summary>
     public bool IsDamaged => _problems.Count > 0;
 
+    /// <summary>
+    /// Small faults that were worked around (e.g. a malformed text event that was skipped). The file
+    /// should still play normally.
+    /// </summary>
+    public IReadOnlyList<string> Repairs => _repairs;
+
+    private readonly List<string> _repairs = new();
+
     private readonly List<string> _problems = new();
     private readonly short _division;
 
@@ -115,7 +123,7 @@ public sealed class StandardMidiFile
             if (isTrack)
             {
                 var trackEvents = new List<MidiEvent>();
-                bool complete = ReadTrack(span.Slice(pos, len), track, trackEvents);
+                bool complete = ReadTrack(span.Slice(pos, len), track, trackEvents, _repairs);
                 if (!complete && declared <= (uint)len)
                     _problems.Add($"Track {track + 1} has no End-of-Track marker (damaged track).");
                 if (!complete || declared > (uint)len)
@@ -193,14 +201,25 @@ public sealed class StandardMidiFile
         return trackEvents;
     }
 
+    /// <summary>Finds the next "delta 0, meta event" (00 FF type) at or after <paramref name="from"/>.</summary>
+    private static int FindNextMeta(ReadOnlySpan<byte> s, int from)
+    {
+        for (int i = from; i + 2 < s.Length; i++)
+        {
+            if (s[i] == 0x00 && s[i + 1] == 0xFF && s[i + 2] < 0x80) return i;
+        }
+        return -1;
+    }
+
     /// <returns>True if the track ended with an End-of-Track event.</returns>
-    private static bool ReadTrack(ReadOnlySpan<byte> s, int track, List<MidiEvent> events)
+    private static bool ReadTrack(ReadOnlySpan<byte> s, int track, List<MidiEvent> events, List<string> repairs)
     {
         int pos = 0;
         long tick = 0;
         byte running = 0;
         while (pos < s.Length)
         {
+            int eventStart = pos;
             if (!TryReadVarLen(s, ref pos, out int delta)) break;
             tick += delta;
             if (pos >= s.Length) break;
@@ -209,7 +228,17 @@ public sealed class StandardMidiFile
             if (status < 0x80)
             {
                 // Running status: reuse the previous channel status byte.
-                if (running == 0) break; // Corrupt data; give up on this track.
+                if (running == 0)
+                {
+                    // Malformed data (e.g. a text event whose length byte is too small, leaving its
+                    // remaining characters in the stream). Skip ahead to the next meta event and carry on.
+                    int next = FindNextMeta(s, eventStart + 1);
+                    if (next < 0) break;
+                    repairs.Add($"Track {track + 1}: skipped {next - eventStart} bytes of malformed data at byte {eventStart:N0} of the track.");
+                    tick -= delta;
+                    pos = next;
+                    continue;
+                }
                 status = running;
             }
             else

@@ -152,3 +152,52 @@ public class RealWorldPatternTests
         Assert.Equal("Bryan Adams, Rod Stewart, and Sting", KaraokeToMp4.Metadata.SongInfoCleaner.CleanArtist("Recorded by Bryan Adams, Rod Stewart, and Sting"));
     }
 }
+
+public class CatalogueAndRepairTests
+{
+    [Theory]
+    [InlineData("Can You Feel the Love Tonight - CP000015", "Can You Feel the Love Tonight")]
+    [InlineData("Crazy [SC8127-05]", "Crazy")]
+    [InlineData("Crazy (DK026-03)", "Crazy")]
+    [InlineData("Get Your Kicks on ROUTE 666", "Get Your Kicks on ROUTE 666")] // not a code (no separator)
+    [InlineData("Summer of 69", "Summer of 69")]
+    [InlineData("1999", "1999")]
+    public void CatalogueCodesAreStripped(string raw, string expected)
+    {
+        Assert.Equal(expected, KaraokeToMp4.Metadata.SongInfoCleaner.CleanTitle(raw));
+    }
+
+    [Fact]
+    public void MalformedTextEvent_IsSkipped_AndTheRestOfTheTrackIsKept()
+    {
+        // A lyric event whose length byte (0x04) is shorter than its text ("    xxxxxxxx"), followed by more events.
+        var track = new List<byte>();
+        track.AddRange(new byte[] { 0x00, 0xFF, 0x03, 0x05 }); track.AddRange("Words"u8.ToArray());
+        track.AddRange(new byte[] { 0x00, 0xFF, 0x05, 0x04 }); track.AddRange("    xxxxxxxx"u8.ToArray());
+        track.AddRange(new byte[] { 0x00, 0xFF, 0x05, 0x03 }); track.AddRange("Hi "u8.ToArray());
+        track.AddRange(new byte[] { 0x83, 0x60, 0xFF, 0x05, 0x04 }); track.AddRange("there"u8.ToArray()[..4]);
+        track.AddRange(new byte[] { 0x00, 0xFF, 0x2F, 0x00 });
+
+        var file = new List<byte>("MThd"u8.ToArray());
+        file.AddRange(new byte[] { 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xE0 });
+        file.AddRange("MTrk"u8.ToArray());
+        file.AddRange(new[] { (byte)(track.Count >> 24), (byte)(track.Count >> 16), (byte)(track.Count >> 8), (byte)track.Count });
+        file.AddRange(track);
+
+        var midi = new KaraokeToMp4.Midi.StandardMidiFile(file.ToArray());
+        Assert.False(midi.IsDamaged);
+        Assert.Single(midi.Repairs);
+        var lyrics = midi.Events.Where(e => e.IsMeta && e.MetaType == 0x05).Select(e => System.Text.Encoding.ASCII.GetString(e.Data)).ToList();
+        Assert.Contains("Hi ", lyrics);
+        Assert.Contains("ther", lyrics);
+    }
+
+    [Fact]
+    public void PlainMidi_IsExplained()
+    {
+        using var dir = new TempDir();
+        var path = TestFiles.WriteTemp(dir.Path, "tune.mid", TestFiles.MidiWithLyricsAndHeader(Array.Empty<string>(), "Tune"));
+        Assert.Equal(KaraokeFormat.Unknown, KaraokeConverter.DetectFormat(path));
+        Assert.Contains("no lyrics", KaraokeConverter.DescribeUnsupported(path));
+    }
+}

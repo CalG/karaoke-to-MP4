@@ -204,7 +204,7 @@ internal sealed class MainForm : Form
             KaraokeFormat.Mp3Cdg => "MP3 + CDG",
             KaraokeFormat.Kar => "KAR (karaoke MIDI)",
             KaraokeFormat.MidiWithLyrics => "MIDI with lyrics",
-            _ => "not recognised (needs MP3+CDG, KAR or MIDI with lyrics)",
+            _ => KaraokeConverter.DescribeUnsupported(path),
         };
         bool ok = format != KaraokeFormat.Unknown;
         // Title/artist come from the file's own data (KAR @T, MIDI text, ID3 tags). They're appended to

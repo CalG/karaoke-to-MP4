@@ -116,6 +116,8 @@ if (infoOnly)
         }
         foreach (var problem in midi.Problems)
             Console.WriteLine($"WARNING: {problem}");
+        foreach (var repair in midi.Repairs)
+            Console.WriteLine($"NOTE: {repair}");
         Console.WriteLine();
         Console.WriteLine("First text/name/copyright events (tick, track, type, text):");
         var names = new Dictionary<byte, string> { [0x01] = "Text", [0x02] = "Copyright", [0x03] = "Name", [0x05] = "Lyric" };
@@ -137,7 +139,9 @@ if (Path.GetFullPath(output) == Path.GetFullPath(input))
     return 1;
 }
 
-Console.WriteLine($"{input}  [{KaraokeConverter.DetectFormat(input)}]  ->  {output}");
+var detected = KaraokeConverter.DetectFormat(input);
+if (detected == KaraokeFormat.Unknown) { Console.Error.WriteLine(KaraokeConverter.DescribeUnsupported(input)); return 1; }
+Console.WriteLine($"{input}  [{detected}]  ->  {output}");
 
 options.OnWarning = w => { Console.WriteLine(); Console.WriteLine($"WARNING: {w}"); };
 

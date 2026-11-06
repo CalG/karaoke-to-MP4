@@ -157,8 +157,28 @@ public sealed class KaraokeConverter
                 return new MidiKaraokeConverter(_options).ConvertAsync(inputPath, outputPath, progress, cancellationToken, songInfo);
 
             default:
-                throw new KaraokeConversionException($"'{inputPath}' is not a supported karaoke file (MP3+CDG, KAR or MIDI with lyrics).");
+                throw new KaraokeConversionException(DescribeUnsupported(inputPath));
         }
+    }
+
+    /// <summary>Explains why <paramref name="path"/> can't be converted, e.g. "plain MIDI file with no lyrics".</summary>
+    public static string DescribeUnsupported(string path)
+    {
+        var name = Path.GetFileName(path);
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        if (!File.Exists(path)) return $"'{name}' was not found.";
+        if (new FileInfo(path).Length == 0) return $"'{name}' is empty (0 bytes).";
+        if (ext is ".mid" or ".midi" or ".rmi" or ".kar")
+        {
+            try
+            {
+                _ = StandardMidiFile.FromFile(path);
+                return $"'{name}' is a plain MIDI file with no lyrics, so there is nothing to show on screen.";
+            }
+            catch (InvalidDataException) { return $"'{name}' is not a valid MIDI file."; }
+        }
+        if (CdgConverter.AudioExtensions.Contains(ext)) return $"'{name}' has no matching .cdg file next to it.";
+        return $"'{name}' is not a supported karaoke file (MP3+CDG, KAR or MIDI with lyrics).";
     }
 
     /// <summary>Converts an explicit audio + CDG pair.</summary>

@@ -66,11 +66,17 @@ public static class SongInfoCleaner
         };
     }
 
-    /// <summary>Removes karaoke packaging ("(Karaoke Version)", copyright, "[Tune 1000]") from a title.</summary>
+    // Disc/track catalogue codes tacked onto a title: "Song - CP000015", "Song [SC8127-05]", "Song (DK026-03)".
+    private static readonly Regex CatalogueCode = new(
+        @"(\s*[-–—|:]\s*|\s*[\(\[]\s*)[A-Z]{1,5}[-_]?\d{3,}(?:[-_.]\d{1,3})?\s*[\)\]]?\s*$",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>Removes karaoke packaging ("(Karaoke Version)", copyright, "[Tune 1000]", catalogue codes) from a title.</summary>
     public static string? CleanTitle(string? title)
     {
         if (string.IsNullOrWhiteSpace(title)) return null;
         var t = Copyright.Replace(title, "");
+        t = CatalogueCode.Replace(t, "");
         // Only drop bracketed text that is packaging; keep real parts of a title like "(I Can't Get No) Satisfaction".
         t = Brackets.Replace(t, m => PackagingWord.IsMatch(m.Value) || Year.IsMatch(m.Value) ? "" : m.Value);
         t = Tidy(t);
