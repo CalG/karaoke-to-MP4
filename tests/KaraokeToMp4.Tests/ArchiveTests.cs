@@ -47,7 +47,7 @@ public class ArchiveTests
         Assert.Contains(path, SongHealthChecker.FindSongs(new[] { dir.Path }));
         var health = SongHealthChecker.Check(path);
         Assert.Equal(SongHealthStatus.NoIssues, health.Status);
-        Assert.Equal("MP3+G zip (.mp3gz)", health.Kind);
+        Assert.Equal("MP3+G ZIP (.mp3gz)", health.Kind);
         Assert.Equal(KaraokeFormat.Mp3Cdg, KaraokeConverter.DetectFormat(path));
     }
 
@@ -63,7 +63,7 @@ public class ArchiveTests
         Assert.Contains(gz, SongHealthChecker.FindSongs(new[] { dir.Path }));
         var health = SongHealthChecker.Check(gz);
         Assert.Equal(SongHealthStatus.CannotRepair, health.Status);
-        Assert.Equal("GZip (.mp3gz)", health.Kind);
+        Assert.Equal("gzip (.mp3gz)", health.Kind);
     }
 
     [Fact]

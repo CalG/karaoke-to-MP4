@@ -135,7 +135,7 @@ public static class SongInfoReader
 
                 case KaraokeFormat.Mp3Cdg:
                     var ext = Path.GetExtension(inputPath).ToLowerInvariant();
-                    if (ext != ".cdg" && ArchiveSniffer.IsZip(inputPath)) return FromZip(inputPath);
+                    if (ext != ".cdg" && ArchiveSniffer.IsArchiveFile(inputPath)) return FromArchive(inputPath);
                     var audio = ext == ".cdg" ? CdgConverter.FindAudioForCdg(inputPath) : inputPath;
                     return audio == null ? SongInfo.Empty : await FromAudioAsync(audio, tools, ct).ConfigureAwait(false);
             }
@@ -147,17 +147,15 @@ public static class SongInfoReader
         return SongInfo.Empty;
     }
 
-    private static SongInfo FromZip(string zipPath)
+    private static SongInfo FromArchive(string archivePath)
     {
-        using var zip = ZipFile.OpenRead(zipPath);
-        var mp3 = zip.Entries.FirstOrDefault(e => e.Name.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
+        using var archive = Archives.SongArchive.Open(archivePath);
+        var mp3 = archive.FindSongs().Select(s => s.Audio)
+            .FirstOrDefault(a => a != null && a.Name.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
         if (mp3 == null) return SongInfo.Empty;
 
-        // Zip entry streams can't seek; buffer the (few MB) MP3 so the ID3v1 tag at the end can be read too.
-        using var ms = new MemoryStream();
-        using (var s = mp3.Open())
-            s.CopyTo(ms);
-        ms.Position = 0;
+        // Archive entry streams can't seek; buffer the (few MB) MP3 so the ID3v1 tag at the end can be read too.
+        using var ms = new MemoryStream(mp3.ReadAllBytes());
         return SongInfoCleaner.Clean(Id3Reader.Read(ms));
     }
 

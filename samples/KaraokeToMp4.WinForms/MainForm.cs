@@ -10,8 +10,9 @@ namespace KaraokeToMp4.WinForms;
 internal sealed class MainForm : Form
 {
     private const string FileFilter =
-        "Karaoke files (*.mp3;*.cdg;*.zip;*.kar;*.mid;*.midi)|*.mp3;*.cdg;*.zip;*.kar;*.mid;*.midi;*.ogg;*.wav;*.flac;*.m4a|" +
-        "MP3 + CDG (*.mp3;*.cdg;*.zip)|*.mp3;*.cdg;*.zip|" +
+        "Karaoke files|*.mp3;*.cdg;*.zip;*.7z;*.rar;*.tar;*.gz;*.tgz;*.kar;*.mid;*.midi;*.ogg;*.wav;*.flac;*.m4a|" +
+        "MP3 + CDG (*.mp3;*.cdg)|*.mp3;*.cdg|" +
+        "MP3 + CDG archives (*.zip;*.7z;*.rar;*.tar;*.gz;*.tgz)|*.zip;*.7z;*.rar;*.tar;*.gz;*.tgz|" +
         "KAR / MIDI (*.kar;*.mid;*.midi)|*.kar;*.mid;*.midi|" +
         "All files (*.*)|*.*";
 

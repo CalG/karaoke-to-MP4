@@ -79,7 +79,8 @@ public sealed class CdgConverter
     }
 
     /// <summary>
-    /// Converts a .zip archive containing an audio file and a .cdg file (the usual "MP3+G" bundle).
+    /// Converts an archive containing an audio file and a .cdg file (the usual "MP3+G" bundle). Any format
+    /// <see cref="Archives.SongArchive"/> reads is accepted (ZIP, 7-Zip, RAR, TAR, tar.gz), whatever the extension.
     /// </summary>
     public async Task ConvertZipAsync(
         string zipPath,
@@ -92,25 +93,21 @@ public sealed class CdgConverter
         Directory.CreateDirectory(tempDir);
         try
         {
-            string? cdg = null, audio = null;
-            using (var zip = ZipFile.OpenRead(zipPath))
+            string cdg, audio;
+            using (var archive = Archives.SongArchive.Open(zipPath))
             {
-                var cdgEntry = zip.Entries.FirstOrDefault(e => e.Name.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase))
-                    ?? throw new KaraokeConversionException($"'{zipPath}' does not contain a .cdg file.");
-                var cdgBase = Path.GetFileNameWithoutExtension(cdgEntry.Name);
-                var audioEntries = zip.Entries
-                    .Where(e => AudioExtensions.Contains(Path.GetExtension(e.Name), StringComparer.OrdinalIgnoreCase))
-                    .ToList();
-                var audioEntry =
-                    audioEntries.FirstOrDefault(e => string.Equals(Path.GetFileNameWithoutExtension(e.Name), cdgBase, StringComparison.OrdinalIgnoreCase))
-                    ?? audioEntries.FirstOrDefault()
-                    ?? throw new KaraokeConversionException($"'{zipPath}' does not contain an audio file.");
+                if (archive.IsEncrypted)
+                    throw new KaraokeConversionException($"'{Path.GetFileName(zipPath)}' is password-protected.");
+                var song = archive.FindSongs().FirstOrDefault(s => s.Cdg != null)
+                    ?? throw new KaraokeConversionException($"'{Path.GetFileName(zipPath)}' does not contain a .cdg file.");
+                if (song.Audio == null)
+                    throw new KaraokeConversionException($"'{Path.GetFileName(zipPath)}' does not contain an audio file for '{song.Name}'.");
 
                 // Extract under fixed names so archive paths can never escape the temp folder.
                 cdg = Path.Combine(tempDir, "track.cdg");
-                audio = Path.Combine(tempDir, "track" + Path.GetExtension(audioEntry.Name).ToLowerInvariant());
-                cdgEntry.ExtractToFile(cdg);
-                audioEntry.ExtractToFile(audio);
+                audio = Path.Combine(tempDir, "track" + Path.GetExtension(song.Audio.Name).ToLowerInvariant());
+                await File.WriteAllBytesAsync(cdg, song.Cdg!.ReadAllBytes(), cancellationToken).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(audio, song.Audio.ReadAllBytes(), cancellationToken).ConfigureAwait(false);
             }
             await ConvertAsync(audio, cdg, outputPath, progress, cancellationToken, songInfo).ConfigureAwait(false);
         }

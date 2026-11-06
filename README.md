@@ -19,8 +19,9 @@ A .NET 8 C# library (plus a small command-line tool) that converts karaoke files
   the user's permission. Not needed if you supply your own backing
   track with `MidiAudioOverridePath`.
 
-NuGet dependencies: [MeltySynth](https://github.com/sinshu/meltysynth) (pure C# SoundFont synth)
-and [SkiaSharp](https://github.com/mono/SkiaSharp) (lyric text rendering).
+NuGet dependencies: [MeltySynth](https://github.com/sinshu/meltysynth) (pure C# SoundFont synth),
+[SkiaSharp](https://github.com/mono/SkiaSharp) (lyric text rendering) and
+[SharpCompress](https://github.com/adamhathcock/sharpcompress) (reading 7z/RAR/TAR/ZIP song bundles).
 
 ## Library usage
 
@@ -299,12 +300,24 @@ What is checked:
 |---|---|
 | `.cdg` + audio | audio present and not empty; every graphics packet checked with the CD+G error-correction data |
 | `.zip` (MP3+G) | the same, inside the zip (repairs rewrite the zip); **one song per zip**: a zip holding several songs is listed as repairable, and Fix splits it into one zip per song (named after each song, same extension) |
-| archives with other extensions | recognised by content, so a zip renamed to e.g. `.mp3gz` is checked (and converted) like a `.zip`; GZip/7-Zip/RAR files are listed under *Cannot repair* with their extension |
+| `.7z`, `.rar`, `.tar`, `.tar.gz`/`.tgz` | read (and converted) like a zip, but **read-only**: damage or several songs in one archive are reported under *Cannot repair*, because only ZIPs are rewritten |
+| archives with other extensions | recognised by content, so e.g. a zip or 7z renamed to `.mp3gz` is handled like its real format |
 | `.kar` / `.mid` | valid MIDI, has lyrics, not cut off, no malformed events |
 | audio files (.mp3, .ogg, .wav, ...) | has a matching `.cdg` (otherwise listed as missing lyrics) |
 
 The same checks are available to other programs through `KaraokeToMp4.Health.SongHealthChecker`
 (`FindSongs`, `Check`, `Repair`).
+
+### Archive support
+
+Song bundles are read with [SharpCompress](https://github.com/adamhathcock/sharpcompress) (MIT,
+pure .NET): ZIP (including the LZMA, BZip2, PPMd and Deflate64 methods 7-Zip can use, which .NET's
+own `System.IO.Compression` can't decompress), 7-Zip, RAR/RAR5, TAR and gzip/tar.gz. The format
+is detected from the file's content, so the extension doesn't matter. Password-protected archives are
+reported but not opened.
+
+When the Song Checker repairs or splits a ZIP, the new files are standard (Deflate) ZIPs. Other
+formats are never modified.
 
 ## How it works
 

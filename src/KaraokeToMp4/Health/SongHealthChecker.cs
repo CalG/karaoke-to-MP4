@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using KaraokeToMp4.Archives;
 using KaraokeToMp4.Cdg;
 using KaraokeToMp4.Midi;
 
@@ -98,16 +99,10 @@ public static class SongHealthChecker
         {
             var ext = Ext(path);
             if (ext == ".cdg") return CheckCdgPair(path);
-            if (ext == ".zip") return CheckZip(path);
             if (MidiExtensions.Contains(ext)) return CheckMidi(path);
             if (CdgConverter.AudioExtensions.Contains(ext))
                 return Result(path, "Audio", SongHealthStatus.OnlyMusic, "Missing lyrics: no matching .cdg file.");
-
-            var archive = ArchiveSniffer.MightBeArchive(path) ? ArchiveSniffer.Detect(path) : ArchiveKind.None;
-            if (archive == ArchiveKind.Zip) return CheckZip(path);
-            if (archive != ArchiveKind.None)
-                return Result(path, $"{ArchiveSniffer.Describe(archive)} ({ext})", SongHealthStatus.CannotRepair,
-                    $"{ArchiveSniffer.Describe(archive)}-compressed file: can't look inside (only ZIP-style song bundles are supported).");
+            if (IsArchivePath(path)) return CheckArchive(path);
             return Result(path, "Unknown", SongHealthStatus.CannotRepair, "Not a karaoke file type.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -134,12 +129,13 @@ public static class SongHealthChecker
         if (before.Status != SongHealthStatus.Repairable) return new[] { before };
 
         var ext = Ext(path);
-        if (ext != ".cdg" && !MidiExtensions.Contains(ext) && ArchiveSniffer.IsZip(path))
+        if (ext != ".cdg" && !MidiExtensions.Contains(ext) && IsArchivePath(path))
         {
+            // Only ZIPs are ever "Repairable" (other formats are read-only), and they are written back as ZIP.
             int songs;
-            using (var zip = ZipFile.OpenRead(path)) songs = ZipSongs(zip).Count;
+            using (var archive = SongArchive.Open(path)) songs = archive.FindSongs().Count;
             if (songs > 1) return SplitZip(path, keepBackup).Select(Check).ToList();
-            RepairZip(path, keepBackup);
+            RebuildZip(path, keepBackup);
             return new[] { Check(path) };
         }
 
@@ -169,61 +165,71 @@ public static class SongHealthChecker
         return FromCdgData(cdgPath, "MP3+G", File.ReadAllBytes(cdgPath));
     }
 
-    /// <summary>One song inside a zip: its .cdg and/or audio entry.</summary>
-    private sealed record ZipSong(string Name, ZipArchiveEntry? Cdg, ZipArchiveEntry? Audio);
+    private static bool IsArchivePath(string path) => ArchiveSniffer.IsArchiveFile(path);
 
-    /// <summary>Pairs up the .cdg and audio entries of a zip by name (one song per .cdg).</summary>
-    private static List<ZipSong> ZipSongs(ZipArchive zip)
+    private static readonly Dictionary<string, string[]> UsualExtensions = new()
     {
-        var cdgs = zip.Entries.Where(e => Ext(e.Name) == ".cdg").ToList();
-        var audios = zip.Entries.Where(e => CdgConverter.AudioExtensions.Contains(Ext(e.Name))).ToList();
-        var songs = new List<ZipSong>();
-        var used = new HashSet<ZipArchiveEntry>();
-        foreach (var cdg in cdgs)
+        ["ZIP"] = new[] { ".zip" },
+        ["7-Zip"] = new[] { ".7z" },
+        ["RAR"] = new[] { ".rar" },
+        ["TAR"] = new[] { ".tar" },
+        ["tar.gz"] = new[] { ".tgz", ".gz" },
+        ["gzip"] = new[] { ".gz" },
+    };
+
+    private static SongHealth CheckArchive(string path)
+    {
+        var ext = Ext(path);
+        SongArchive archive;
+        try
         {
-            var name = System.IO.Path.GetFileNameWithoutExtension(cdg.Name);
-            var audio = audios.FirstOrDefault(a => !used.Contains(a) &&
-                string.Equals(System.IO.Path.GetFileNameWithoutExtension(a.Name), name, StringComparison.OrdinalIgnoreCase));
-            if (audio != null) used.Add(audio);
-            songs.Add(new ZipSong(name, cdg, audio));
+            archive = SongArchive.Open(path);
+        }
+        catch (InvalidDataException ex)
+        {
+            return Result(path, $"Archive ({ext})", SongHealthStatus.CannotRepair, "Can't open the archive: " + ex.Message);
         }
 
-        var leftover = audios.Where(a => !used.Contains(a)).ToList();
-        // A single pair whose files are named differently is still one song.
-        if (songs.Count == 1 && songs[0].Audio == null && leftover.Count == 1)
-            return new List<ZipSong> { songs[0] with { Audio = leftover[0] } };
-        songs.AddRange(leftover.Select(a => new ZipSong(System.IO.Path.GetFileNameWithoutExtension(a.Name), null, a)));
-        return songs;
-    }
-
-    private static SongHealth CheckZip(string zipPath)
-    {
-        var ext = Ext(zipPath);
-        string kind = ext == ".zip" ? "MP3+G zip" : $"MP3+G zip ({ext})";
-        using var zip = ZipFile.OpenRead(zipPath);
-        var songs = ZipSongs(zip);
-
-        if (songs.Count == 0)
-            return Result(zipPath, ext == ".zip" ? "ZIP" : $"ZIP ({ext})", SongHealthStatus.CannotRepair, "The archive contains no karaoke files.");
-
-        if (songs.Count > 1)
+        using (archive)
         {
-            var details = songs.Select(sg =>
-                $"{sg.Name}: " + (sg.Cdg == null ? "audio only" : sg.Audio == null ? "graphics only" :
-                    CdgInspector.Inspect(ReadEntry(sg.Cdg)).Summary)).ToList();
-            return new SongHealth(zipPath, kind, SongHealthStatus.Repairable,
-                $"Contains {songs.Count} songs (one per zip expected). Fix splits it into {songs.Count} zips.", details);
-        }
+            var format = archive.FormatName;
+            var usual = UsualExtensions.TryGetValue(format, out var exts) && exts.Contains(ext);
+            string kind = usual ? $"MP3+G {format}" : $"MP3+G {format} ({ext})";
+            string readOnly = $"{format} archives are read-only here (only ZIPs are rewritten); the converter can still use it.";
 
-        var song = songs[0];
-        bool hasAudio = song.Audio is { Length: > 0 };
-        bool hasCdg = song.Cdg is { Length: > 0 };
-        if (!hasCdg)
-            return Result(zipPath, kind, SongHealthStatus.OnlyMusic, "The zip has audio but no .cdg graphics (music only).");
-        if (!hasAudio)
-            return Result(zipPath, kind, SongHealthStatus.OnlyLyrics,
-                (song.Audio == null ? "The zip has no audio file" : "The audio file inside the zip is empty") + " (lyrics only).");
-        return FromCdgData(zipPath, kind, ReadEntry(song.Cdg!));
+            if (archive.IsEncrypted)
+                return Result(path, kind, SongHealthStatus.CannotRepair, "The archive is password-protected.");
+
+            var songs = archive.FindSongs();
+            if (songs.Count == 0)
+                return Result(path, $"{format} ({ext})", SongHealthStatus.CannotRepair, "The archive contains no karaoke files.");
+
+            if (songs.Count > 1)
+            {
+                var details = songs.Select(sg =>
+                    $"{sg.Name}: " + (sg.Cdg == null ? "audio only" : sg.Audio == null ? "graphics only" :
+                        CdgInspector.Inspect(sg.Cdg.ReadAllBytes()).Summary)).ToList();
+                return archive.CanRewrite
+                    ? new SongHealth(path, kind, SongHealthStatus.Repairable,
+                        $"Contains {songs.Count} songs (one per zip expected). Fix splits it into {songs.Count} zips.", details)
+                    : new SongHealth(path, kind, SongHealthStatus.CannotRepair,
+                        $"Contains {songs.Count} songs (one per archive expected). {readOnly}", details);
+            }
+
+            var song = songs[0];
+            bool hasAudio = song.Audio is { Size: > 0 };
+            bool hasCdg = song.Cdg is { Size: > 0 };
+            if (!hasCdg)
+                return Result(path, kind, SongHealthStatus.OnlyMusic, "The archive has audio but no .cdg graphics (music only).");
+            if (!hasAudio)
+                return Result(path, kind, SongHealthStatus.OnlyLyrics,
+                    (song.Audio == null ? "The archive has no audio file" : "The audio file inside the archive is empty") + " (lyrics only).");
+
+            var health = FromCdgData(path, kind, song.Cdg!.ReadAllBytes());
+            if (health.Status == SongHealthStatus.Repairable && !archive.CanRewrite)
+                health = health with { Status = SongHealthStatus.CannotRepair, Summary = health.Summary + " " + readOnly };
+            return health;
+        }
     }
 
     private static SongHealth FromCdgData(string path, string kind, byte[] data)
@@ -290,25 +296,30 @@ public static class SongHealthChecker
 
     // ---------------- repair helpers ----------------
 
-    private static void RepairZip(string zipPath, bool keepBackup)
+    /// <summary>
+    /// Rewrites a single-song zip with its .cdg repaired, keeping every other file (and the file dates).
+    /// The new zip uses standard Deflate compression.
+    /// </summary>
+    private static void RebuildZip(string zipPath, bool keepBackup)
     {
-        // Work on a copy so the original is only replaced once the new zip is complete.
         var temp = zipPath + ".repairing";
-        File.Copy(zipPath, temp, overwrite: true);
         try
         {
-            using (var zip = ZipFile.Open(temp, ZipArchiveMode.Update))
+            using (var archive = SongArchive.Open(zipPath))
+            using (var target = ZipFile.Open(temp, ZipArchiveMode.Create))
             {
-                var entry = ZipSongs(zip)[0].Cdg!;
-                var data = ReadEntry(entry);
-                CdgInspector.RepairInPlace(data);
-                var name = entry.FullName;
-                var modified = entry.LastWriteTime;
-                entry.Delete();
-                var fresh = zip.CreateEntry(name, CompressionLevel.Optimal);
-                fresh.LastWriteTime = modified;
-                using var s = fresh.Open();
-                s.Write(WholePackets(data));
+                var cdg = archive.FindSongs()[0].Cdg;
+                foreach (var entry in archive.Entries)
+                {
+                    byte[]? replacement = null;
+                    if (entry == cdg)
+                    {
+                        replacement = entry.ReadAllBytes();
+                        CdgInspector.RepairInPlace(replacement);
+                        replacement = WholePackets(replacement);
+                    }
+                    CopyEntry(entry, target, replacement, keepFolders: true);
+                }
             }
             ReplaceWith(temp, zipPath, keepBackup);
         }
@@ -330,19 +341,19 @@ public static class SongHealthChecker
         var temps = new List<(string Temp, string Name)>();
         try
         {
-            using (var source = ZipFile.OpenRead(zipPath))
+            using (var source = SongArchive.Open(zipPath))
             {
-                foreach (var song in ZipSongs(source))
+                foreach (var song in source.FindSongs())
                 {
                     var temp = System.IO.Path.Combine(dir, $".split-{Guid.NewGuid():N}{ext}");
                     using (var target = ZipFile.Open(temp, ZipArchiveMode.Create))
                     {
-                        if (song.Audio != null) CopyEntry(song.Audio, target, null);
+                        if (song.Audio != null) CopyEntry(song.Audio, target, null, keepFolders: false);
                         if (song.Cdg != null)
                         {
-                            var data = ReadEntry(song.Cdg);
+                            var data = song.Cdg.ReadAllBytes();
                             CdgInspector.RepairInPlace(data);
-                            CopyEntry(song.Cdg, target, WholePackets(data));
+                            CopyEntry(song.Cdg, target, WholePackets(data), keepFolders: false);
                         }
                     }
                     temps.Add((temp, SongInfo.SanitizeFileName(song.Name)));
@@ -370,20 +381,12 @@ public static class SongHealthChecker
         return created;
     }
 
-    private static void CopyEntry(ZipArchiveEntry source, ZipArchive target, byte[]? replacement)
+    private static void CopyEntry(SongArchiveEntry source, ZipArchive target, byte[]? replacement, bool keepFolders)
     {
-        var entry = target.CreateEntry(source.Name, CompressionLevel.Optimal);
-        entry.LastWriteTime = source.LastWriteTime;
+        var entry = target.CreateEntry(keepFolders ? source.FullName : source.Name, CompressionLevel.Optimal);
+        if (source.LastModified is { } modified && modified.Year >= 1980) entry.LastWriteTime = modified;
         using var output = entry.Open();
-        if (replacement != null)
-        {
-            output.Write(replacement);
-        }
-        else
-        {
-            using var input = source.Open();
-            input.CopyTo(output);
-        }
+        output.Write(replacement ?? source.ReadAllBytes());
     }
 
     private static bool IsBackup(string path) =>
@@ -417,21 +420,13 @@ public static class SongHealthChecker
     private static byte[] WholePackets(byte[] data) =>
         data.Length % CdgDecoder.PacketSize == 0 ? data : data[..(data.Length - data.Length % CdgDecoder.PacketSize)];
 
-    private static byte[] ReadEntry(ZipArchiveEntry entry)
-    {
-        using var s = entry.Open();
-        using var ms = new MemoryStream();
-        s.CopyTo(ms);
-        return ms.ToArray();
-    }
-
     private static SongHealth Result(string path, string kind, SongHealthStatus status, string summary) =>
         new(path, kind, status, summary, Array.Empty<string>());
 
     private static string KindOf(string path) => Ext(path) switch
     {
         ".cdg" => "MP3+G",
-        ".zip" => "MP3+G zip",
+        ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".tgz" => "MP3+G archive",
         ".kar" => "KAR",
         ".mid" or ".midi" => "MIDI",
         _ => "Audio",

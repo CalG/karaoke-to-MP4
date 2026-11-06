@@ -42,8 +42,8 @@ public sealed class KaraokeConverter
                 return KaraokeFormat.Mp3Cdg;
             case ".kar":
                 return KaraokeFormat.Kar;
-            case ".zip":
-                return ZipHasCdg(path);
+            case ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".tgz":
+                return ArchiveHasCdg(path);
             case ".mid":
             case ".midi":
             case ".rmi":
@@ -59,7 +59,7 @@ public sealed class KaraokeConverter
         }
 
         // A zip with a custom extension (e.g. ".mp3gz"), recognised by its content.
-        if (ArchiveSniffer.IsZip(path)) return ZipHasCdg(path);
+        if (ArchiveSniffer.IsArchive(path)) return ArchiveHasCdg(path);
 
         if (CdgConverter.AudioExtensions.Contains(ext) && CdgConverter.FindCdgForAudio(path) != null)
             return KaraokeFormat.Mp3Cdg;
@@ -136,7 +136,7 @@ public sealed class KaraokeConverter
         var ext = Path.GetExtension(inputPath).ToLowerInvariant();
         switch (format)
         {
-            case KaraokeFormat.Mp3Cdg when ext != ".cdg" && ArchiveSniffer.IsZip(inputPath):
+            case KaraokeFormat.Mp3Cdg when ext != ".cdg" && ArchiveSniffer.IsArchiveFile(inputPath):
                 return new CdgConverter(_options).ConvertZipAsync(inputPath, outputPath, progress, cancellationToken, songInfo);
 
             case KaraokeFormat.Mp3Cdg when ext == ".cdg":
@@ -157,12 +157,12 @@ public sealed class KaraokeConverter
         }
     }
 
-    private static KaraokeFormat ZipHasCdg(string path)
+    private static KaraokeFormat ArchiveHasCdg(string path)
     {
         try
         {
-            using var zip = ZipFile.OpenRead(path);
-            return zip.Entries.Any(e => e.Name.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase))
+            using var archive = Archives.SongArchive.Open(path);
+            return archive.Entries.Any(e => e.Name.EndsWith(".cdg", StringComparison.OrdinalIgnoreCase))
                 ? KaraokeFormat.Mp3Cdg
                 : KaraokeFormat.Unknown;
         }

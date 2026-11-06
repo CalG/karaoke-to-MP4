@@ -8,6 +8,7 @@ public enum ArchiveKind
     GZip,
     SevenZip,
     Rar,
+    Tar,
 }
 
 /// <summary>
@@ -30,9 +31,9 @@ public static class ArchiveSniffer
     {
         try
         {
-            Span<byte> head = stackalloc byte[8];
+            Span<byte> head = stackalloc byte[512];
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1);
-            int n = fs.Read(head);
+            int n = fs.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
             return Detect(head[..n]);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -51,6 +52,8 @@ public static class ArchiveSniffer
             return ArchiveKind.SevenZip;
         if (head.Length >= 4 && head[..4].SequenceEqual("Rar!"u8))
             return ArchiveKind.Rar;
+        if (head.Length >= 262 && head.Slice(257, 5).SequenceEqual("ustar"u8))
+            return ArchiveKind.Tar;
         return ArchiveKind.None;
     }
 
@@ -59,6 +62,23 @@ public static class ArchiveSniffer
         Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase)
             ? File.Exists(path)
             : !NeverArchive.Contains(Path.GetExtension(path)) && Detect(path) == ArchiveKind.Zip;
+
+    /// <summary>True for any recognised archive (ZIP, 7-Zip, RAR, TAR, gzip), whatever its extension.</summary>
+    public static bool IsArchive(string path) =>
+        File.Exists(path) && !NeverArchive.Contains(Path.GetExtension(path)) && Detect(path) != ArchiveKind.None;
+
+    /// <summary>Archive extensions that are treated as archives without sniffing their content.</summary>
+    public static readonly IReadOnlySet<string> ArchiveExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".zip", ".7z", ".rar", ".tar", ".gz", ".tgz",
+    };
+
+    /// <summary>
+    /// True for files with an archive extension, and for any other file whose content is a recognised
+    /// archive (e.g. a song bundle saved as ".mp3gz").
+    /// </summary>
+    public static bool IsArchiveFile(string path) =>
+        (ArchiveExtensions.Contains(Path.GetExtension(path)) && File.Exists(path)) || IsArchive(path);
 
     /// <summary>True when a file with this extension could be an archive worth opening during a scan.</summary>
     public static bool MightBeArchive(string path) => !NeverArchive.Contains(Path.GetExtension(path));
@@ -69,6 +89,7 @@ public static class ArchiveSniffer
         ArchiveKind.GZip => "GZip",
         ArchiveKind.SevenZip => "7-Zip",
         ArchiveKind.Rar => "RAR",
+        ArchiveKind.Tar => "TAR",
         _ => "not an archive",
     };
 }

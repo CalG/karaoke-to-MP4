@@ -26,4 +26,9 @@
     <ProjectReference Include="..\..\src\KaraokeToMp4\KaraokeToMp4.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Small synthetic archives (no copyrighted content) made with 7-Zip / tar for the archive tests. -->
+    <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
