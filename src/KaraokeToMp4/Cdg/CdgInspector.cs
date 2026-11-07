@@ -17,6 +17,26 @@ public sealed record CdgReport
     /// </summary>
     public bool HasParity { get; init; }
 
+    /// <summary>
+    /// True when the rip carries only the short "Q" check data (protecting each packet's command and
+    /// instruction) but not the full "P" data. Instructions can then be verified and repaired; the picture
+    /// data can't.
+    /// </summary>
+    public bool HasQParityOnly { get; init; }
+
+    /// <summary>Instruction bytes repaired with the Q check data (see <see cref="HasQParityOnly"/>).</summary>
+    public int QRepaired { get; init; }
+
+    /// <summary>Packets whose command/instruction the Q check data shows to be damaged beyond repair.</summary>
+    public int QUnrepairable { get; init; }
+
+    /// <summary>
+    /// In a rip whose check bytes were zeroed, graphics packets where a check byte is not zero. Each one is a
+    /// bit error that happened to land on a check byte; others have probably landed on picture data, where
+    /// they can't be seen.
+    /// </summary>
+    public int StrayCheckBits { get; init; }
+
     /// <summary>Damaged packets that error correction can repair.</summary>
     public int Repairable { get; init; }
 
@@ -62,6 +82,7 @@ public sealed record CdgReport
     /// (some producers use vendor-specific codes) and are ignored, just as a real player ignores them.
     /// </summary>
     public bool IsClean => Repairable == 0 && Unrepairable == 0 && TrailingBytes == 0 &&
+                           QRepaired == 0 && QUnrepairable == 0 && StrayCheckBits == 0 &&
                            (HasParity || (UnknownInstructions == 0 && OffScreenTiles == 0));
 
     /// <summary>One-line, human readable summary.</summary>
@@ -70,7 +91,13 @@ public sealed record CdgReport
         get
         {
             var parts = new List<string>();
-            if (!HasParity) parts.Add("no error-correction data in this rip, so damage can't be detected");
+            if (!HasParity)
+                parts.Add(HasQParityOnly
+                    ? "only partial error-correction data (Q) in this rip: instructions are checked, picture damage can't be detected"
+                    : "no error-correction data in this rip, so damage can't be detected");
+            if (QRepaired > 0) parts.Add($"{QRepaired} damaged instruction{(QRepaired == 1 ? "" : "s")} (repaired with the Q check data)");
+            if (QUnrepairable > 0) parts.Add($"{QUnrepairable} packet{(QUnrepairable == 1 ? "" : "s")} with a damaged instruction that can't be repaired");
+            if (StrayCheckBits > 0) parts.Add($"{StrayCheckBits} packet{(StrayCheckBits == 1 ? " shows" : "s show")} bit errors in the empty check bytes (more may be hidden in the graphics)");
             if (Repairable > 0) parts.Add($"{Repairable} damaged packet{(Repairable == 1 ? "" : "s")} (repaired automatically)");
             if (Recovered > 0) parts.Add($"{Recovered} badly damaged packet{(Recovered == 1 ? "" : "s")} rebuilt from twin packets");
             if (Unrepairable > 0) parts.Add($"{Unrepairable} graphics packet{(Unrepairable == 1 ? "" : "s")} too damaged to repair (left blank)");
@@ -139,6 +166,43 @@ public static class CdgInspector
             }
         }
 
+        // Without full check data: use partial (Q) check data if present, else look for stray bits.
+        int qRepaired = 0, qUnrepairable = 0, strayBits = 0;
+        bool hasQ = false;
+        if (!hasParity)
+        {
+            int graphicsPackets = 0, qValid = 0, checkBytesZero = 0;
+            for (int i = 0; i < count; i++)
+            {
+                var packet = data.AsSpan(i * CdgDecoder.PacketSize, CdgDecoder.PacketSize);
+                if ((packet[0] & 0x3F) != 0x09) continue;
+                graphicsPackets++;
+                if (CdgParity.QValid(packet)) qValid++;
+                if (CheckBytesZero(packet)) checkBytesZero++;
+            }
+            hasQ = graphicsPackets > 0 && qValid * 2 > graphicsPackets;
+            bool zeroedRip = graphicsPackets > 0 && checkBytesZero >= graphicsPackets * 0.9;
+
+            for (int i = 0; i < count; i++)
+            {
+                var packet = data.AsSpan(i * CdgDecoder.PacketSize, CdgDecoder.PacketSize);
+                if ((packet[0] & 0x3F) != 0x09) continue;
+                if (hasQ)
+                {
+                    var status = CdgParity.RepairQ(packet);
+                    if (status == CdgPacketStatus.Ok) continue;
+                    times.Add(TimeSpan.FromSeconds((double)i / CdgDecoder.PacketsPerSecond));
+                    if (status == CdgPacketStatus.Repaired) qRepaired++;
+                    else { qUnrepairable++; packet.Clear(); } // a wrong instruction would draw garbage
+                }
+                else if (zeroedRip && !CheckBytesZero(packet))
+                {
+                    strayBits++;
+                    times.Add(TimeSpan.FromSeconds((double)i / CdgDecoder.PacketsPerSecond));
+                }
+            }
+        }
+
         // Pass 2: packets beyond ordinary repair.
         int recovered = 0, emptyCleared = 0, unrepairable = 0;
         if (lost.Count > 0)
@@ -191,6 +255,10 @@ public static class CdgInspector
             Recovered = recovered,
             EmptyPacketsCleared = emptyCleared,
             Unrepairable = unrepairable,
+            HasQParityOnly = hasQ,
+            QRepaired = qRepaired,
+            QUnrepairable = qUnrepairable,
+            StrayCheckBits = strayBits,
             UnknownInstructions = unknown,
             FillerPackets = filler,
             OffScreenTiles = offscreen,
@@ -198,6 +266,11 @@ public static class CdgInspector
             DamageTimes = times,
         };
     }
+
+    /// <summary>True when the packet's check bytes (Q: 2-3, P: 20-23) are all zero, as rippers that drop them leave them.</summary>
+    private static bool CheckBytesZero(ReadOnlySpan<byte> packet) =>
+        (packet[2] & 0x3F) == 0 && (packet[3] & 0x3F) == 0 &&
+        (packet[20] & 0x3F) == 0 && (packet[21] & 0x3F) == 0 && (packet[22] & 0x3F) == 0 && (packet[23] & 0x3F) == 0;
 
     /// <summary>
     /// A damaged packet with at most 4 non-zero symbols holds no graphics: it is an empty packet with noise.

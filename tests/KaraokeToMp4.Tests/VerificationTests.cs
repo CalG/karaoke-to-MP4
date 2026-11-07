@@ -239,3 +239,92 @@ public class PartlyRepairableTests
         Assert.Equal(SongHealthStatus.NoIssues, SongHealthChecker.Check(Pair(dir, Cdg(), new byte[10])).Status);
     }
 }
+
+/// <summary>Rips with only the short Q check data, and zeroed rips that show stray bit errors.</summary>
+public class PartialCheckDataTests
+{
+    /// <summary>A 20 s song whose packets carry Q check data but zeroed P check data.</summary>
+    private static byte[] QOnlyCdg()
+    {
+        var data = TestFiles.SimpleCdg(20);
+        for (int i = 0; i < data.Length; i += 24)
+        {
+            KaraokeToMp4.Cdg.CdgParity.ComputeParity(data.AsSpan(i, 24));
+            data.AsSpan(i + 20, 4).Clear();
+        }
+        return data;
+    }
+
+    private static int FirstTile(byte[] cdg)
+    {
+        for (int i = 0; i < cdg.Length; i += 24) if (cdg[i] == 9 && cdg[i + 1] == 6) return i / 24;
+        throw new InvalidOperationException();
+    }
+
+    private static string Pair(TempDir dir, byte[] cdg)
+    {
+        File.WriteAllBytes(dir.File("Song.mp3"), Mp3InspectorTests.Mp3(20));
+        return TestFiles.WriteTemp(dir.Path, "Song.cdg", cdg);
+    }
+
+    [Fact]
+    public void QOnlyRip_IsRecognised_AndCleanOneIsCannotVerify()
+    {
+        using var dir = new TempDir();
+        var health = SongHealthChecker.Check(Pair(dir, QOnlyCdg()));
+        Assert.Equal(SongHealthStatus.CannotVerify, health.Status);
+        Assert.Contains("partial error-correction data", health.Summary);
+    }
+
+    [Fact]
+    public void QOnlyRip_DamagedInstruction_IsRepairable_AndFixRestoresIt()
+    {
+        using var dir = new TempDir();
+        var cdg = QOnlyCdg();
+        int tile = FirstTile(cdg);
+        cdg[tile * 24 + 1] ^= 0x20;                            // instruction 6 -> 38 (draws XOR instead of normal)
+        var path = Pair(dir, cdg);
+
+        var health = SongHealthChecker.Check(path);
+        Assert.Equal(SongHealthStatus.Repairable, health.Status);
+        Assert.Contains("damaged instruction", health.Summary);
+
+        Assert.Equal(SongHealthStatus.CannotVerify, SongHealthChecker.Repair(path).Status);
+        Assert.Equal(6, File.ReadAllBytes(path)[tile * 24 + 1] & 0x3F);
+    }
+
+    [Fact]
+    public void QOnlyRip_InstructionDamagedBeyondRepair_CannotRepair()
+    {
+        using var dir = new TempDir();
+        var cdg = QOnlyCdg();
+        int tile = FirstTile(cdg);
+        cdg[tile * 24 + 1] ^= 0x20;
+        cdg[tile * 24 + 2] ^= 0x11;                            // two of the four Q symbols damaged
+        var health = SongHealthChecker.Check(Pair(dir, cdg));
+        Assert.Equal(SongHealthStatus.CannotRepair, health.Status);
+        Assert.Contains("can't be repaired", health.Summary);
+    }
+
+    [Fact]
+    public void ZeroedRip_WithStrayCheckBits_IsFlagged()
+    {
+        using var dir = new TempDir();
+        var cdg = TestFiles.SimpleCdg(20);                     // check bytes all zero, like many rips
+        int tile = FirstTile(cdg);
+        cdg[tile * 24 + 21] = 0x04;                            // one flipped bit in an empty check byte
+        var health = SongHealthChecker.Check(Pair(dir, cdg));
+        Assert.Equal(SongHealthStatus.CannotVerify, health.Status);
+        Assert.Contains("signs of bit errors (1 packet)", health.Summary);
+        Assert.Contains(health.Details, d => d.StartsWith("Bit errors found: 1 packet has"));
+    }
+
+    [Fact]
+    public void ZeroedRip_WithoutStrayBits_IsNotFlagged()
+    {
+        using var dir = new TempDir();
+        var health = SongHealthChecker.Check(Pair(dir, TestFiles.SimpleCdg(20)));
+        Assert.Equal(SongHealthStatus.CannotVerify, health.Status);
+        Assert.DoesNotContain("bit errors", health.Summary);
+    }
+}

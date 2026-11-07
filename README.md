@@ -307,6 +307,14 @@ dotnet run --project samples/KaraokeToMp4.WinForms
      - every MP3 audio frame present and intact (checked frame by frame, without decoding)
      - the .cdg and MP3 the same length (within 3 s or 2%)
 
+     Two extra checks for these rips:
+     - **Partial check data.** Some rips keep only the short "Q" check bytes, which protect each
+       packet's command and instruction but not its picture data. Instructions are then verified, and a
+       damaged one is repaired (*Bad but repairable*) or, if Q can't fix it, the song goes to *Cannot repair*.
+     - **Stray bits.** In a rip whose check bytes are all zero, a non-zero check byte is a bit error.
+       The song stays in *Can't verify*, flagged "Warning: signs of bit errors", since more errors have
+       probably hit the picture data where they can't be seen.
+
      A song that fails any of these goes to **Cannot repair** instead, e.g. "the MP3 is 95 s shorter
      than the graphics: the audio is probably cut off".
 3. **Fix Checked** / **Fix All Repairable** repairs those songs in place. With *Keep a backup* ticked

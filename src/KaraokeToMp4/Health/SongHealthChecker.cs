@@ -372,20 +372,39 @@ public static class SongHealthChecker
             problems.Add($"{report.UnknownInstructions:N0} invalid graphics instruction{(report.UnknownInstructions == 1 ? "" : "s")}");
         if (report.OffScreenTiles > 0)
             problems.Add($"{report.OffScreenTiles:N0} graphics tile{(report.OffScreenTiles == 1 ? "" : "s")} drawn off-screen");
+        if (report.QUnrepairable > 0)
+            problems.Add($"{report.QUnrepairable:N0} packet{(report.QUnrepairable == 1 ? " has a" : "s have")} damaged instruction{(report.QUnrepairable == 1 ? "" : "s")} (shown by the partial check data) that can't be repaired");
 
         // 2. Audio: every MP3 frame present and intact, and the same length as the graphics.
         problems.AddRange(CheckAudio(report, details, loadAudio));
 
+        string what = report.HasQParityOnly ? "Only partial error-correction data" : "No error-correction data";
         if (problems.Count > 0)
             return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
-                "No error-correction data, and " + string.Join("; ", problems) + ".", details);
+                $"{what}, and " + string.Join("; ", problems) + ".", details);
 
-        if (report.TrailingBytes > 0)
-            return new SongHealth(path, kind, SongHealthStatus.Repairable, "File ends mid-packet.", details);
+        if (report.QRepaired > 0 || report.TrailingBytes > 0)
+            return new SongHealth(path, kind, SongHealthStatus.Repairable,
+                string.Join("; ", new[]
+                {
+                    report.QRepaired > 0 ? $"{report.QRepaired:N0} damaged instruction{(report.QRepaired == 1 ? "" : "s")} can be repaired with the partial check data" : null,
+                    report.TrailingBytes > 0 ? "file ends mid-packet" : null,
+                }.Where(x => x != null)) + ". The rest can't be verified (no full error-correction data).", details);
 
-        details.Add("Without error-correction data, bit errors inside the graphics can't be detected.");
+        details.Add(report.HasQParityOnly
+            ? "Partial error-correction data (Q): every packet's command and instruction checked out; the picture data has no check data, so bit errors there can't be detected."
+            : "Without error-correction data, bit errors inside the graphics can't be detected.");
+        if (report.StrayCheckBits > 0)
+            details.Add($"Bit errors found: {report.StrayCheckBits:N0} packet{(report.StrayCheckBits == 1 ? " has" : "s have")} a non-zero byte where this rip's check bytes are empty. " +
+                        "Bit errors land on those bytes only about a quarter of the time, so more have probably hit the graphics. Consider finding a better copy.");
+
         return new SongHealth(path, kind, SongHealthStatus.CannotVerify,
-            "No error-correction data, so graphics damage can't be ruled out. Graphics instructions, MP3 audio and lengths all check out." +
+            (report.HasQParityOnly
+                ? "Only partial error-correction data: instructions verified, picture damage can't be ruled out."
+                : "No error-correction data, so graphics damage can't be ruled out.") +
+            (report.StrayCheckBits > 0
+                ? $" Warning: signs of bit errors ({report.StrayCheckBits:N0} packet{(report.StrayCheckBits == 1 ? "" : "s")})."
+                : " Graphics instructions, MP3 audio and lengths all check out.") +
             (report.FillerPackets > 0 ? $" ({report.FillerPackets:N0} filler packets, normal.)" : ""), details);
     }
 

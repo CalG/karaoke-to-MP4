@@ -143,6 +143,26 @@ public static class CdgParity
         for (int j = 0; j < 4; j++) packet[20 + j] = (byte)((packet[20 + j] & 0xC0) | rem[j]);
     }
 
+    /// <summary>
+    /// Repairs a packet using only its Q code (symbols 0-3: command, instruction and two check symbols), for
+    /// rips that carry Q but not P check data. Q can locate and fix one bad symbol among those four.
+    /// </summary>
+    public static CdgPacketStatus RepairQ(Span<byte> packet)
+    {
+        int s0 = packet[0] & 0x3F, s1 = packet[1] & 0x3F, s2 = packet[2] & 0x3F, s3 = packet[3] & 0x3F;
+        int syn0 = s0 ^ s1 ^ s2 ^ s3;
+        int syn1 = Mul(Pow(3), s0) ^ Mul(Pow(2), s1) ^ Mul(Pow(1), s2) ^ s3;
+        if (syn0 == 0 && syn1 == 0) return CdgPacketStatus.Ok;
+        if (syn0 == 0 || syn1 == 0) return CdgPacketStatus.Unrepairable;
+
+        // One error e at position j: syn0 = e, syn1 = e * a^(3 - j).
+        int k = (Log[syn1] - Log[syn0] + 63) % 63;
+        int j = 3 - k;
+        if (j is < 0 or > 3) return CdgPacketStatus.Unrepairable;
+        Flip(packet, j, syn0);
+        return CdgPacketStatus.Repaired;
+    }
+
     /// <summary>The four P syndromes of a packet (all zero when it is intact).</summary>
     internal static void Syndromes(ReadOnlySpan<byte> packet, Span<int> syndromes) => PSyndromes(packet, syndromes);
 
