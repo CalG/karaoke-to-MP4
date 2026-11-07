@@ -313,6 +313,7 @@ internal sealed class MainForm : Form
             view.BeginUpdate();
             view.Items.AddRange(items.ToArray());
             view.EndUpdate();
+            view.Items[^1].EnsureVisible(); // follow the scan: keep the newest song in view
         }
 
         if (_found > 0)
