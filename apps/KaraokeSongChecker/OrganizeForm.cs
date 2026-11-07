@@ -24,6 +24,7 @@ internal sealed class OrganizeForm : Form
         (SongHealthStatus.OnlyMusic, "Only music", RelocateAction.Move, true),
         (SongHealthStatus.CannotRepair, "Cannot repair", RelocateAction.Move, true),
         (SongHealthStatus.NoIssues, "No issues detected", RelocateAction.Move, false),
+        (SongHealthStatus.CannotVerify, "Can't verify", RelocateAction.Move, false),
         (SongHealthStatus.Repairable, "Bad but repairable", RelocateAction.Copy, false),
     };
 
@@ -55,8 +56,8 @@ internal sealed class OrganizeForm : Form
         _songs = songs;
         Text = "Organize Files";
         Width = 900;
-        Height = 470;
-        MinimumSize = new Size(700, 470);
+        Height = 510;
+        MinimumSize = new Size(700, 510);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.Sizable;
 

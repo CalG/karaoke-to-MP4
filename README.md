@@ -278,7 +278,7 @@ dotnet run --project samples/KaraokeToMp4.WinForms
 
 1. **Add Folder...** (or drag folders onto the list) for each karaoke folder. Tick *Include subfolders*
    to scan everything below them. The list is remembered between runs.
-2. **Scan** checks every song and sorts it into five tabs:
+2. **Scan** checks every song and sorts it into six tabs:
    * **No issues detected**
    * **Bad but repairable**, e.g. a scratched-disc CDG whose damaged packets the error-correction data
      can fix, or a MIDI/KAR file with malformed bytes that can be cleaned up.
@@ -287,6 +287,15 @@ dotnet run --project samples/KaraokeToMp4.WinForms
      a .zip with audio but no .cdg, or a plain MIDI file with no lyrics.
    * **Only lyrics**: a .cdg without an audio file (or with an empty one), a .zip with a .cdg but no
      audio, or a KAR/MIDI file with lyrics but no notes.
+   * **Can't verify**: an MP3+G song whose .cdg carries no error-correction data (some rippers and
+     authoring tools leave it out), so damage inside the graphics can't be detected. These songs pass
+     every check that is possible without that data:
+     - no invalid graphics instructions or off-screen tiles
+     - every MP3 audio frame present and intact (checked frame by frame, without decoding)
+     - the .cdg and MP3 the same length (within 3 s or 2%)
+
+     A song that fails any of these goes to **Cannot repair** instead, e.g. "the MP3 is 95 s shorter
+     than the graphics: the audio is probably cut off".
 3. **Fix Checked** / **Fix All Repairable** repairs those songs in place. With *Keep a backup* ticked
    (the default), each original is kept next to it as `name.ext.bak`. Fixed songs move to the
    *No issues* tab.

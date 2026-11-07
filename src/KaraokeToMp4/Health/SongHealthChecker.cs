@@ -22,6 +22,13 @@ public enum SongHealthStatus
 
     /// <summary>Lyrics without music: a .cdg with no (or empty) audio, or a KAR/MIDI file with lyrics but no notes.</summary>
     OnlyLyrics,
+
+    /// <summary>
+    /// An MP3+G song whose .cdg has no error-correction data, so damage inside the graphics can't be
+    /// detected. It passed every check that is possible without that data: valid graphics instructions,
+    /// intact MP3 audio frames, and matching .cdg and MP3 lengths.
+    /// </summary>
+    CannotVerify,
 }
 
 /// <summary>Result of checking one song.</summary>
@@ -163,7 +170,7 @@ public static class SongHealthChecker
             return Result(cdgPath, "MP3+G", SongHealthStatus.OnlyLyrics, "No matching audio file, e.g. .mp3 (lyrics only).");
         if (new FileInfo(audio).Length == 0)
             return Result(cdgPath, "MP3+G", SongHealthStatus.OnlyLyrics, $"The audio file is empty, 0 bytes (lyrics only): {System.IO.Path.GetFileName(audio)}");
-        return FromCdgData(cdgPath, "MP3+G", File.ReadAllBytes(cdgPath));
+        return FromCdgData(cdgPath, "MP3+G", File.ReadAllBytes(cdgPath), () => (System.IO.Path.GetFileName(audio), File.ReadAllBytes(audio)));
     }
 
     private static bool IsArchivePath(string path) => ArchiveSniffer.IsArchiveFile(path);
@@ -241,14 +248,18 @@ public static class SongHealthChecker
                 return Result(path, kind, SongHealthStatus.OnlyLyrics,
                     (song.Audio == null ? "The archive has no audio file" : "The audio file inside the archive is empty") + " (lyrics only).");
 
-            var health = FromCdgData(path, kind, song.Cdg!.ReadAllBytes());
+            var health = FromCdgData(path, kind, song.Cdg!.ReadAllBytes(), () => (song.Audio!.Name, song.Audio.ReadAllBytes()));
             if (health.Status == SongHealthStatus.Repairable && !archive.CanRewrite)
                 health = health with { Status = SongHealthStatus.CannotRepair, Summary = health.Summary + " " + readOnly };
             return health;
         }
     }
 
-    private static SongHealth FromCdgData(string path, string kind, byte[] data)
+    /// <param name="loadAudio">
+    /// Reads the song's audio; only called when the .cdg has no error-correction data (the extra checks
+    /// that need the audio are skipped for verifiable songs, to keep scans fast).
+    /// </param>
+    private static SongHealth FromCdgData(string path, string kind, byte[] data, Func<(string Name, byte[] Data)> loadAudio)
     {
         if (data.Length < CdgDecoder.PacketSize)
             return Result(path, kind, SongHealthStatus.OnlyMusic, "The .cdg file is empty (music only).");
@@ -264,6 +275,8 @@ public static class SongHealthChecker
                 .Select(g => $"{g.Key / 60}:{g.Key % 60:00}" + (g.Count() > 1 ? $"x{g.Count()}" : ""));
             details.Add("Damage at " + string.Join(", ", times.Take(30)) + (report.DamageTimes.Count > 30 ? ", ..." : ""));
         }
+
+        if (!report.HasParity) return CheckWithoutParity(path, kind, report, details, loadAudio);
 
         SongHealthStatus status;
         if (report.Unrepairable > 0) status = SongHealthStatus.CannotRepair;
@@ -281,6 +294,66 @@ public static class SongHealthChecker
             _ => report.Summary,
         };
         return new SongHealth(path, kind, status, summary, details);
+    }
+
+    /// <summary>Allowed difference between the .cdg and MP3 lengths before one of them counts as cut off.</summary>
+    private static TimeSpan LengthTolerance(TimeSpan length) =>
+        TimeSpan.FromSeconds(Math.Max(3, length.TotalSeconds * 0.02));
+
+    /// <summary>
+    /// For a .cdg without error-correction data: check what can be checked (graphics instructions, the MP3's
+    /// frames, and that both files are the same length). Failing any check means the song is damaged in a
+    /// way that can't be repaired; passing them all still isn't proof, so it goes to "Can't verify".
+    /// </summary>
+    private static SongHealth CheckWithoutParity(string path, string kind, CdgReport report, List<string> details,
+        Func<(string Name, byte[] Data)> loadAudio)
+    {
+        var problems = new List<string>();
+
+        // 1. Graphics: instructions that don't exist, or tiles drawn off the screen. (Filler packets are normal.)
+        if (report.UnknownInstructions > 0)
+            problems.Add($"{report.UnknownInstructions:N0} invalid graphics instruction{(report.UnknownInstructions == 1 ? "" : "s")}");
+        if (report.OffScreenTiles > 0)
+            problems.Add($"{report.OffScreenTiles:N0} graphics tile{(report.OffScreenTiles == 1 ? "" : "s")} drawn off-screen");
+
+        // 2. Audio: every MP3 frame present and intact, and the same length as the graphics.
+        var (audioName, audio) = loadAudio();
+        if (audioName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
+        {
+            var mp3 = Audio.Mp3Inspector.Inspect(audio);
+            details.Add($"MP3: {mp3.Frames:N0} frames, {mp3.Duration:m\\:ss\\.f}" +
+                        (mp3.DamagedBytes > 0 ? $", {mp3.DamagedBytes:N0} bytes outside valid frames" : ""));
+            if (mp3.Problem != null)
+            {
+                problems.Add("MP3: " + mp3.Problem);
+            }
+            else
+            {
+                var diff = report.Duration - mp3.Duration;
+                if (diff.Duration() > LengthTolerance(report.Duration > mp3.Duration ? report.Duration : mp3.Duration))
+                {
+                    problems.Add(diff > TimeSpan.Zero
+                        ? $"the MP3 is {diff.TotalSeconds:F0} s shorter than the graphics ({mp3.Duration:m\\:ss} vs {report.Duration:m\\:ss}): the audio is probably cut off"
+                        : $"the graphics are {(-diff).TotalSeconds:F0} s shorter than the MP3 ({report.Duration:m\\:ss} vs {mp3.Duration:m\\:ss}): the .cdg is probably cut off");
+                }
+            }
+        }
+        else
+        {
+            details.Add($"Audio ({System.IO.Path.GetExtension(audioName)}) not checked: only MP3 audio can be checked.");
+        }
+
+        if (problems.Count > 0)
+            return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
+                "No error-correction data, and " + string.Join("; ", problems) + ".", details);
+
+        if (report.TrailingBytes > 0)
+            return new SongHealth(path, kind, SongHealthStatus.Repairable, "File ends mid-packet.", details);
+
+        details.Add("Without error-correction data, bit errors inside the graphics can't be detected.");
+        return new SongHealth(path, kind, SongHealthStatus.CannotVerify,
+            "No error-correction data, so graphics damage can't be ruled out. Graphics instructions, MP3 audio and lengths all check out." +
+            (report.FillerPackets > 0 ? $" ({report.FillerPackets:N0} filler packets, normal.)" : ""), details);
     }
 
     private static SongHealth CheckMidi(string path)

@@ -18,6 +18,7 @@ internal sealed class MainForm : Form
     private static readonly (SongHealthStatus Status, string Title)[] Lists =
     {
         (SongHealthStatus.NoIssues, "No issues detected"),
+        (SongHealthStatus.CannotVerify, "Can't verify"),
         (SongHealthStatus.Repairable, "Bad but repairable"),
         (SongHealthStatus.CannotRepair, "Cannot repair"),
         (SongHealthStatus.OnlyMusic, "Only music"),
@@ -293,9 +294,10 @@ internal sealed class MainForm : Form
         int dead = _views[SongHealthStatus.CannotRepair].Items.Count;
         int music = _views[SongHealthStatus.OnlyMusic].Items.Count;
         int lyrics = _views[SongHealthStatus.OnlyLyrics].Items.Count;
+        int unverified = _views[SongHealthStatus.CannotVerify].Items.Count;
         SetStatus((cancelled ? "Scan cancelled. " : "Scan finished. ") +
                   $"{_checked:N0} songs checked in {stopwatch.Elapsed:m\\:ss}: " +
-                  $"{_views[SongHealthStatus.NoIssues].Items.Count:N0} OK, {bad:N0} repairable, {dead:N0} cannot be repaired, " +
+                  $"{_views[SongHealthStatus.NoIssues].Items.Count:N0} OK, {unverified:N0} can't be verified, {bad:N0} repairable, {dead:N0} cannot be repaired, " +
                   $"{music:N0} only music, {lyrics:N0} only lyrics.");
         if (bad > 0) _tabs.SelectedTab = _pages[SongHealthStatus.Repairable];
         else if (dead > 0) _tabs.SelectedTab = _pages[SongHealthStatus.CannotRepair];
