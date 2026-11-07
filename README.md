@@ -112,7 +112,16 @@ with XOR tiles, each one leaves a stray block on screen until the next screen cl
 builds up as the song plays.
 
 `CdgInspector` checks a file and `CdgErrorCorrection` (on by default) repairs it before rendering.
-Packets too damaged to repair are skipped instead of drawn. Some rippers strip the error-correction
+
+Packets with more than two damaged bytes go through a second stage:
+* **Empty packets with noise** (most of them on scratched discs) are cleared, which restores them exactly.
+* **Lost graphics packets are rebuilt when possible.** On the disc, each packet's bytes are interleaved
+  with its neighbours, so the bytes that had to be repaired in nearby packets predict where this one
+  is damaged. A rebuilt packet is accepted only if it exactly matches a "twin" elsewhere in the song:
+  the XOR packet that highlights a letter piece carries the same position and pixels as the packet
+  that drew it. Lost highlight packets otherwise leave parts of letters in the old colour, and lost
+  drawing packets leave a coloured hole when the highlight passes.
+* Anything else is left blank instead of drawn as garbage. Some rippers strip the error-correction
 bytes; such files are reported as "can't be checked" and left unchanged.
 
 ```bash

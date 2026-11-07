@@ -116,3 +116,84 @@ public class CdgFillerTests
         Assert.StartsWith("OK", report.Summary);
     }
 }
+
+/// <summary>
+/// Packets with 3-4 damaged symbols (beyond ordinary repair), as produced by scratches or drives that read
+/// CD+G subcode badly. Seen on a real Sound Choice disc where lost XOR packets left letters half-coloured.
+/// </summary>
+public class CdgRecoveryTests
+{
+    private const int DrawAt = 300, HighlightAt = 900;
+
+    /// <summary>
+    /// A song that draws a letter piece with XOR at row 5, col 10 and later highlights it with the same
+    /// pixels (the "twin"), plus enough other tiles that the stream is clearly a real rip with parity.
+    /// </summary>
+    private static byte[] Song()
+    {
+        var packets = Enumerable.Range(0, 1500).Select(_ => new byte[24]).ToArray();
+        packets[0] = TestFiles.LoadColors(true, (0, 0, 0), (15, 15, 15), (0, 15, 0));
+        packets[1] = TestFiles.MemoryPreset(0);
+        for (int i = 10; i < 1500; i += 15) packets[i] = TestFiles.Tile(0, 1, i % 18, i % 50, (byte)(i % 63));
+        var glyph = new byte[16];
+        glyph[0] = 0; glyph[1] = 1; glyph[2] = 5; glyph[3] = 10;
+        for (int r = 0; r < 12; r++) glyph[4 + r] = (byte)(0x1E ^ r);
+        packets[DrawAt] = TestFiles.CdgPacket(38, glyph);
+        glyph[1] = 3; // highlight: same position and pixels, different colour mask
+        packets[HighlightAt] = TestFiles.CdgPacket(38, glyph);
+        foreach (var p in packets) CdgParity.ComputeParity(p);
+        return packets.SelectMany(p => p).ToArray();
+    }
+
+    private static void Damage(byte[] data, int packet, params int[] positions)
+    {
+        foreach (var p in positions) data[packet * 24 + p] ^= 0x2B;
+    }
+
+    [Fact]
+    public void LostHighlightPacket_IsRebuiltFromItsTwin()
+    {
+        var data = Song();
+        var original = data.AsSpan(HighlightAt * 24, 24).ToArray();
+        Damage(data, HighlightAt, 9, 13, 17);              // 3 bad symbols: beyond ordinary repair
+
+        var report = CdgInspector.RepairInPlace(data);
+
+        Assert.Equal(1, report.Recovered);
+        Assert.Equal(0, report.Unrepairable);
+        Assert.Equal(original, data.AsSpan(HighlightAt * 24, 24).ToArray());
+    }
+
+    [Fact]
+    public void LostDrawingPacket_IsRebuiltFromTheHighlight()
+    {
+        var data = Song();
+        var original = data.AsSpan(DrawAt * 24, 24).ToArray();
+        Damage(data, DrawAt, 8, 12, 19);
+        var report = CdgInspector.RepairInPlace(data);
+        Assert.Equal(1, report.Recovered);
+        Assert.Equal(original, data.AsSpan(DrawAt * 24, 24).ToArray());
+    }
+
+    [Fact]
+    public void LostPacketWithoutATwin_IsLeftBlank()
+    {
+        var data = Song();
+        Damage(data, 25, 9, 13, 17, 21);                   // an ordinary tile with no twin, 4 bad symbols
+        var report = CdgInspector.RepairInPlace(data);
+        Assert.Equal(0, report.Recovered);
+        Assert.Equal(1, report.Unrepairable);
+        Assert.All(data.AsSpan(25 * 24, 24).ToArray(), b => Assert.Equal(0, b));
+    }
+
+    [Fact]
+    public void NoiseInAnEmptyPacket_IsClearedAndNotCountedAsLostGraphics()
+    {
+        var data = Song();
+        Damage(data, 401, 0, 8, 16);                       // empty packet + 3 noise symbols at interleave spacing
+        var report = CdgInspector.RepairInPlace(data);
+        Assert.Equal(1, report.EmptyPacketsCleared);
+        Assert.Equal(0, report.Unrepairable);
+        Assert.All(data.AsSpan(401 * 24, 24).ToArray(), b => Assert.Equal(0, b));
+    }
+}

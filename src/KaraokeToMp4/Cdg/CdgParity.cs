@@ -143,6 +143,51 @@ public static class CdgParity
         for (int j = 0; j < 4; j++) packet[20 + j] = (byte)((packet[20 + j] & 0xC0) | rem[j]);
     }
 
+    /// <summary>The four P syndromes of a packet (all zero when it is intact).</summary>
+    internal static void Syndromes(ReadOnlySpan<byte> packet, Span<int> syndromes) => PSyndromes(packet, syndromes);
+
+    /// <summary>True when the Q parity (symbols 0-3: command, instruction, Q check) is consistent.</summary>
+    internal static bool QValid(ReadOnlySpan<byte> packet) => QOk(packet);
+
+    /// <summary>
+    /// Erasure decoding: assuming the damage is at exactly <paramref name="positions"/> (up to 4), solves for
+    /// the error values. Returns false when no such correction fits all four syndromes. With 4 positions a
+    /// solution always exists, so callers must validate the result some other way.
+    /// </summary>
+    internal static bool TrySolveErasures(ReadOnlySpan<int> syndromes, ReadOnlySpan<int> positions, Span<int> values)
+    {
+        int m = positions.Length;
+        if (m is < 1 or > 4) return false;
+        // Rows k = 0..3: sum_j e_j * X_j^k = S_k, with X_j = a^(23 - position_j). Gaussian elimination over GF(64).
+        Span<int> a = stackalloc int[4 * 5];
+        for (int k = 0; k < 4; k++)
+        {
+            for (int j = 0; j < m; j++) a[k * 5 + j] = Pow(k * (23 - positions[j]));
+            a[k * 5 + m] = syndromes[k];
+        }
+        int row = 0;
+        for (int col = 0; col < m; col++)
+        {
+            int pivot = -1;
+            for (int r = row; r < 4; r++) if (a[r * 5 + col] != 0) { pivot = r; break; }
+            if (pivot < 0) return false;
+            if (pivot != row)
+                for (int c = 0; c <= m; c++) (a[row * 5 + c], a[pivot * 5 + c]) = (a[pivot * 5 + c], a[row * 5 + c]);
+            int inverse = Div(1, a[row * 5 + col]);
+            for (int c = 0; c <= m; c++) a[row * 5 + c] = Mul(a[row * 5 + c], inverse);
+            for (int r = 0; r < 4; r++)
+            {
+                if (r == row || a[r * 5 + col] == 0) continue;
+                int f = a[r * 5 + col];
+                for (int c = 0; c <= m; c++) a[r * 5 + c] ^= Mul(f, a[row * 5 + c]);
+            }
+            row++;
+        }
+        for (int r = row; r < 4; r++) if (a[r * 5 + m] != 0) return false; // inconsistent: not this pattern
+        for (int j = 0; j < m; j++) values[j] = a[j * 5 + m];
+        return true;
+    }
+
     private static void Flip(Span<byte> packet, int index, int error) =>
         packet[index] = (byte)((packet[index] & 0xC0) | ((packet[index] ^ error) & 0x3F));
 

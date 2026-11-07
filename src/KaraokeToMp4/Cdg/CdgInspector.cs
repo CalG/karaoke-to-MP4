@@ -20,8 +20,23 @@ public sealed record CdgReport
     /// <summary>Damaged packets that error correction can repair.</summary>
     public int Repairable { get; init; }
 
-    /// <summary>Packets too damaged to repair (they are skipped when converting).</summary>
+    /// <summary>
+    /// Graphics packets too damaged to repair or recover; they are left blank (a small gap in the graphics).
+    /// </summary>
     public int Unrepairable { get; init; }
+
+    /// <summary>
+    /// Graphics packets beyond normal repair that were rebuilt anyway: the damage was located using the
+    /// error pattern of neighbouring packets, and the result was confirmed by an identical "twin" packet
+    /// elsewhere in the song (the same tile drawn at the same position).
+    /// </summary>
+    public int Recovered { get; init; }
+
+    /// <summary>
+    /// Damaged packets that carried no graphics at all (an empty packet plus a little noise); they are cleared,
+    /// which restores them exactly.
+    /// </summary>
+    public int EmptyPacketsCleared { get; init; }
 
     /// <summary>Graphics packets with an instruction code that doesn't exist (after repair).</summary>
     public int UnknownInstructions { get; init; }
@@ -57,7 +72,8 @@ public sealed record CdgReport
             var parts = new List<string>();
             if (!HasParity) parts.Add("no error-correction data in this rip, so damage can't be detected");
             if (Repairable > 0) parts.Add($"{Repairable} damaged packet{(Repairable == 1 ? "" : "s")} (repaired automatically)");
-            if (Unrepairable > 0) parts.Add($"{Unrepairable} packet{(Unrepairable == 1 ? "" : "s")} too damaged to repair (skipped)");
+            if (Recovered > 0) parts.Add($"{Recovered} badly damaged packet{(Recovered == 1 ? "" : "s")} rebuilt from twin packets");
+            if (Unrepairable > 0) parts.Add($"{Unrepairable} graphics packet{(Unrepairable == 1 ? "" : "s")} too damaged to repair (left blank)");
             var ignored = HasParity ? " (not damage; ignored as on a real player)" : " (possible damage)";
             if (FillerPackets > 0) parts.Add($"{FillerPackets} filler packet{(FillerPackets == 1 ? "" : "s")} (normal for some producers, e.g. Music Maestro; ignored)");
             if (UnknownInstructions > 0) parts.Add($"{UnknownInstructions} packet{(UnknownInstructions == 1 ? "" : "s")} with a non-standard instruction{ignored}");
@@ -93,31 +109,66 @@ public static class CdgInspector
         int count = data.Length / CdgDecoder.PacketSize;
         bool hasParity = DetectParity(data, count);
 
-        int graphics = 0, repaired = 0, unrepairable = 0, unknown = 0, offscreen = 0, filler = 0;
+        int repaired = 0;
         var times = new List<TimeSpan>();
+        var lost = new List<int>();
+        var errorPositions = new Dictionary<int, int[]>();
 
+        // Pass 1: ordinary error correction (up to two bad symbols per packet).
+        if (hasParity)
+        {
+            Span<byte> before = stackalloc byte[CdgDecoder.PacketSize];
+            for (int i = 0; i < count; i++)
+            {
+                var packet = data.AsSpan(i * CdgDecoder.PacketSize, CdgDecoder.PacketSize);
+                packet.CopyTo(before);
+                var status = CdgParity.Repair(packet);
+                if (status == CdgPacketStatus.Ok) continue;
+                times.Add(TimeSpan.FromSeconds((double)i / CdgDecoder.PacketsPerSecond));
+                if (status == CdgPacketStatus.Repaired)
+                {
+                    repaired++;
+                    var positions = new List<int>(2);
+                    for (int j = 0; j < CdgDecoder.PacketSize; j++) if (before[j] != packet[j]) positions.Add(j);
+                    errorPositions[i] = positions.ToArray();
+                }
+                else
+                {
+                    lost.Add(i);
+                }
+            }
+        }
+
+        // Pass 2: packets beyond ordinary repair.
+        int recovered = 0, emptyCleared = 0, unrepairable = 0;
+        if (lost.Count > 0)
+        {
+            var twins = IndexTiles(data, count, lost);
+            foreach (int i in lost)
+            {
+                var packet = data.AsSpan(i * CdgDecoder.PacketSize, CdgDecoder.PacketSize);
+                if (IsNoiseInEmptyPacket(packet))
+                {
+                    emptyCleared++;
+                    packet.Clear();
+                }
+                else if (TryRecover(packet, i, errorPositions, twins))
+                {
+                    recovered++;
+                }
+                else
+                {
+                    unrepairable++;
+                    packet.Clear(); // a blank packet draws nothing, which is better than drawing garbage
+                }
+            }
+        }
+
+        // Pass 3: statistics on the (repaired) graphics.
+        int graphics = 0, unknown = 0, offscreen = 0, filler = 0;
         for (int i = 0; i < count; i++)
         {
             var packet = data.AsSpan(i * CdgDecoder.PacketSize, CdgDecoder.PacketSize);
-            if (hasParity)
-            {
-                var status = CdgParity.Repair(packet);
-                if (status != CdgPacketStatus.Ok)
-                {
-                    times.Add(TimeSpan.FromSeconds((double)i / CdgDecoder.PacketsPerSecond));
-                    if (status == CdgPacketStatus.Repaired)
-                    {
-                        repaired++;
-                    }
-                    else
-                    {
-                        unrepairable++;
-                        packet.Clear();
-                        continue;
-                    }
-                }
-            }
-
             if ((packet[0] & 0x3F) != 0x09) continue;
             graphics++;
             int instruction = packet[1] & 0x3F;
@@ -136,7 +187,9 @@ public static class CdgInspector
             GraphicsPackets = graphics,
             Duration = TimeSpan.FromSeconds((double)count / CdgDecoder.PacketsPerSecond),
             HasParity = hasParity,
-            Repairable = repaired,
+            Repairable = repaired + emptyCleared,
+            Recovered = recovered,
+            EmptyPacketsCleared = emptyCleared,
             Unrepairable = unrepairable,
             UnknownInstructions = unknown,
             FillerPackets = filler,
@@ -144,6 +197,112 @@ public static class CdgInspector
             TrailingBytes = data.Length % CdgDecoder.PacketSize,
             DamageTimes = times,
         };
+    }
+
+    /// <summary>
+    /// A damaged packet with at most 4 non-zero symbols holds no graphics: it is an empty packet with noise.
+    /// (A real graphics packet has a command, an instruction, colours, a position and pixel rows.)
+    /// </summary>
+    private static bool IsNoiseInEmptyPacket(ReadOnlySpan<byte> packet)
+    {
+        int nonZero = 0;
+        foreach (var b in packet) if ((b & 0x3F) != 0) nonZero++;
+        return nonZero <= 4;
+    }
+
+    /// <summary>Key for "the same tile at the same place": row, column and the 12 pixel rows (colours excluded).</summary>
+    private static string TileKey(ReadOnlySpan<byte> packet)
+    {
+        Span<char> key = stackalloc char[14];
+        key[0] = (char)(packet[6] & 0x1F);
+        key[1] = (char)(packet[7] & 0x3F);
+        for (int i = 0; i < 12; i++) key[2 + i] = (char)(packet[8 + i] & 0x3F);
+        return new string(key);
+    }
+
+    private static bool IsTile(ReadOnlySpan<byte> packet) =>
+        (packet[0] & 0x3F) == 0x09 && (packet[1] & 0x3F) is 6 or 38 &&
+        (packet[6] & 0x1F) < CdgDecoder.Rows && (packet[7] & 0x3F) < CdgDecoder.Columns;
+
+    /// <summary>All intact tile packets (lost ones excluded), keyed by position and pixels.</summary>
+    private static HashSet<string> IndexTiles(byte[] data, int count, List<int> lost)
+    {
+        var lostSet = new HashSet<int>(lost);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < count; i++)
+        {
+            if (lostSet.Contains(i)) continue;
+            var packet = data.AsSpan(i * CdgDecoder.PacketSize, CdgDecoder.PacketSize);
+            if (IsTile(packet)) keys.Add(TileKey(packet));
+        }
+        return keys;
+    }
+
+    /// <summary>
+    /// Tries to rebuild a packet with 3-4 damaged symbols. The CD's subcode interleaving spreads one scratch
+    /// over neighbouring packets at 8-symbol spacing, so the positions repaired in nearby packets predict
+    /// where this one is damaged. A candidate is accepted only if it is a valid tile that exactly matches a
+    /// twin tile elsewhere in the song, and only if exactly one candidate does.
+    /// </summary>
+    private static bool TryRecover(Span<byte> packet, int index, Dictionary<int, int[]> errorPositions, HashSet<string> twins)
+    {
+        Span<int> syndromes = stackalloc int[4];
+        CdgParity.Syndromes(packet, syndromes);
+
+        // Likely damaged positions: those repaired within 8 packets either side, and the same positions
+        // shifted by the 8-symbol interleave step.
+        var weight = new Dictionary<int, int>();
+        for (int j = index - 8; j <= index + 8; j++)
+        {
+            if (!errorPositions.TryGetValue(j, out var positions)) continue;
+            foreach (int p in positions)
+                for (int shift = -16; shift <= 16; shift += 8)
+                    if (p + shift is >= 0 and < CdgDecoder.PacketSize)
+                        weight[p + shift] = weight.GetValueOrDefault(p + shift) + 1;
+        }
+        var likely = weight.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).Take(10).Select(kv => kv.Key).ToArray();
+
+        var patterns = new List<int[]>();
+        foreach (var combo in Combinations(Enumerable.Range(0, CdgDecoder.PacketSize).ToArray(), 3)) patterns.Add(combo);
+        foreach (var combo in Combinations(likely, 4)) patterns.Add(combo);
+
+        Span<byte> candidate = stackalloc byte[CdgDecoder.PacketSize];
+        Span<int> values = stackalloc int[4];
+        byte[]? match = null;
+        foreach (var positions in patterns)
+        {
+            if (!CdgParity.TrySolveErasures(syndromes, positions, values[..positions.Length])) continue;
+            bool allNonZero = true;
+            for (int k = 0; k < positions.Length; k++) allNonZero &= values[k] != 0;
+            if (!allNonZero) continue;
+
+            packet.CopyTo(candidate);
+            for (int k = 0; k < positions.Length; k++)
+                candidate[positions[k]] = (byte)((candidate[positions[k]] & 0xC0) | ((candidate[positions[k]] ^ values[k]) & 0x3F));
+
+            if (!CdgParity.QValid(candidate) || !IsTile(candidate) || !twins.Contains(TileKey(candidate))) continue;
+            if (match != null && !candidate.SequenceEqual(match)) return false; // two different answers: don't guess
+            match ??= candidate.ToArray();
+        }
+
+        if (match == null) return false;
+        match.CopyTo(packet);
+        return true;
+    }
+
+    private static IEnumerable<int[]> Combinations(int[] items, int k)
+    {
+        if (items.Length < k) yield break;
+        var idx = Enumerable.Range(0, k).ToArray();
+        while (true)
+        {
+            yield return idx.Select(i => items[i]).ToArray();
+            int pos = k - 1;
+            while (pos >= 0 && idx[pos] == items.Length - k + pos) pos--;
+            if (pos < 0) yield break;
+            idx[pos]++;
+            for (int j = pos + 1; j < k; j++) idx[j] = idx[j - 1] + 1;
+        }
     }
 
     private static bool IsFiller(ReadOnlySpan<byte> packet)

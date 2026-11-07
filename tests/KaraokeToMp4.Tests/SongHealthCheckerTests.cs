@@ -60,7 +60,7 @@ public class SongHealthCheckerTests
     {
         using var dir = new TempDir();
         var cdg = CdgWithParity();
-        Damage(cdg, 10, 4);
+        Damage(cdg, 30, 4); // a graphics (tile) packet with no twin, 4 bad symbols
         var path = Pair(dir, "song", cdg);
         var bytes = File.ReadAllBytes(path);
 

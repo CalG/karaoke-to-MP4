@@ -293,18 +293,21 @@ public static class SongHealthChecker
             return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
                 $"{damagedPackets:N0} damaged graphics packets, and the audio is damaged too: " + string.Join("; ", audioProblems) + ".", details);
 
+        string rebuilt = report.Recovered > 0
+            ? $", {report.Recovered:N0} more rebuilt from twin packets"
+            : "";
         if (report.Unrepairable == 0)
             return new SongHealth(path, kind, SongHealthStatus.Repairable,
-                $"{report.Repairable:N0} damaged graphics packet{(report.Repairable == 1 ? "" : "s")} (all repairable)" +
+                $"{report.Repairable:N0} damaged packet{(report.Repairable == 1 ? "" : "s")} (all repairable{rebuilt})" +
                 (report.TrailingBytes > 0 ? "; file ends mid-packet" : "") + ".", details);
 
         // Some packets are beyond repair. If they are only a small share, the repaired song is still usable:
         // the lost packets are left blank (small gaps in the graphics).
         double lost = (double)report.Unrepairable / Math.Max(1, report.GraphicsPackets + report.Unrepairable);
-        details.Add($"{report.Unrepairable:N0} of {report.GraphicsPackets + report.Unrepairable:N0} graphics packets can't be repaired ({lost:P1}).");
+        details.Add($"{report.Unrepairable:N0} of {report.GraphicsPackets + report.Unrepairable:N0} graphics packets can't be repaired ({lost:P2}).");
         if (lost <= MaxUnrepairableShare)
             return new SongHealth(path, kind, SongHealthStatus.Repairable,
-                $"Partly repairable: {report.Repairable:N0} damaged graphics packets can be repaired; {report.Unrepairable:N0} ({lost:P1}) can't " +
+                $"Partly repairable: {report.Repairable:N0} damaged packets can be repaired{rebuilt}; {report.Unrepairable:N0} ({lost:P2}) can't " +
                 "and will be left blank (small gaps in the graphics). The audio is intact.", details);
         return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
             $"{report.Unrepairable:N0} graphics packets ({lost:P1}) are too damaged to repair" +
