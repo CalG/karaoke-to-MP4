@@ -65,7 +65,8 @@ internal sealed class MainForm : Form
 
     private CancellationTokenSource? _cts;
     private readonly ConcurrentQueue<SongHealth> _incoming = new();
-    private readonly System.Windows.Forms.Timer _drainTimer = new() { Interval = 200 };
+    private readonly System.Windows.Forms.Timer _drainTimer = new() { Interval = 500 };
+    private readonly Dictionary<SongHealthStatus, ItemSorter> _sorters = new();
     private int _found;
     private int _checked;
 
@@ -111,6 +112,7 @@ internal sealed class MainForm : Form
         {
             var view = CreateListView(checkBoxes: status == SongHealthStatus.Repairable);
             _views[status] = view;
+            _sorters[status] = (ItemSorter)view.ListViewItemSorter!;
             var page = new TabPage(title) { Padding = new Padding(4) };
             page.Controls.Add(view);
             _pages[status] = page;
@@ -205,7 +207,12 @@ internal sealed class MainForm : Form
             return;
         }
 
-        foreach (var view in _views.Values) view.Items.Clear();
+        foreach (var view in _views.Values)
+        {
+            // A list with a sorter re-sorts (and repaints) on every added item; sort once at the end instead.
+            view.ListViewItemSorter = null;
+            view.Items.Clear();
+        }
         _details.Clear();
         _found = 0;
         _checked = 0;
@@ -263,7 +270,12 @@ internal sealed class MainForm : Form
         {
             _drainTimer.Stop();
             DrainResults();
-            foreach (var view in _views.Values) view.Sort();
+            foreach (var (status, view) in _views)
+            {
+                view.BeginUpdate();
+                view.ListViewItemSorter = _sorters[status]; // assigning the sorter sorts the list once
+                view.EndUpdate();
+            }
             _cts.Dispose();
             _cts = null;
             _progress.Style = ProgressBarStyle.Continuous;
@@ -286,14 +298,21 @@ internal sealed class MainForm : Form
     private void DrainResults()
     {
         if (_incoming.IsEmpty && _cts == null) return;
-        foreach (var view in _views.Values) view.BeginUpdate();
-        try
+
+        // Add each batch in one go, and only to the lists that actually got new songs: touching a
+        // list (BeginUpdate/EndUpdate) repaints it, which made every tab flicker on every tick.
+        var batches = new Dictionary<SongHealthStatus, List<ListViewItem>>();
+        while (_incoming.TryDequeue(out var result))
         {
-            while (_incoming.TryDequeue(out var result)) AddResult(result);
+            if (!batches.TryGetValue(result.Status, out var batch)) batches[result.Status] = batch = new List<ListViewItem>();
+            batch.Add(CreateItem(result));
         }
-        finally
+        foreach (var (status, items) in batches)
         {
-            foreach (var view in _views.Values) view.EndUpdate();
+            var view = _views[status];
+            view.BeginUpdate();
+            view.Items.AddRange(items.ToArray());
+            view.EndUpdate();
         }
 
         if (_found > 0)
@@ -306,16 +325,15 @@ internal sealed class MainForm : Form
         UpdateTabTitles();
     }
 
-    private void AddResult(SongHealth result)
-    {
-        var item = new ListViewItem(new[] { result.FileName, result.Kind, result.Summary, result.Folder })
+    private static ListViewItem CreateItem(SongHealth result) =>
+        new(new[] { result.FileName, result.Kind, result.Summary, result.Folder })
         {
             Tag = result,
             Checked = result.Status == SongHealthStatus.Repairable,
             ToolTipText = result.Path,
         };
-        _views[result.Status].Items.Add(item);
-    }
+
+    private void AddResult(SongHealth result) => _views[result.Status].Items.Add(CreateItem(result));
 
     // ---------------- repairing ----------------
 
@@ -452,7 +470,7 @@ internal sealed class MainForm : Form
 
     private ListView CreateListView(bool checkBoxes)
     {
-        var view = new ListView
+        var view = new BufferedListView
         {
             Dock = DockStyle.Fill,
             View = View.Details,
@@ -471,7 +489,7 @@ internal sealed class MainForm : Form
         view.ColumnClick += (_, e) =>
         {
             sorter.Toggle(e.Column);
-            view.Sort();
+            if (view.ListViewItemSorter != null) view.Sort(); // during a scan the order is applied at the end
         };
         view.SelectedIndexChanged += (_, _) => ShowDetails(view);
         view.DoubleClick += (_, _) => OpenInExplorer(view);
@@ -511,7 +529,10 @@ internal sealed class MainForm : Form
     private void UpdateTabTitles()
     {
         foreach (var (status, title) in Lists)
-            _pages[status].Text = $"{title} ({_views[status].Items.Count:N0})";
+        {
+            var text = $"{title} ({_views[status].Items.Count:N0})";
+            if (_pages[status].Text != text) _pages[status].Text = text; // setting it redraws the tab strip
+        }
     }
 
     // ---------------- state ----------------
