@@ -41,8 +41,11 @@ internal sealed class OrganizeForm : Form
     private CancellationTokenSource? _cts;
     private string? _logPath;
 
-    /// <summary>Paths of songs that were moved away (so the caller can drop them from its lists).</summary>
-    public HashSet<string> MovedSongs { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Songs that were moved: original path of the song's main file → its new path.</summary>
+    public Dictionary<string, string> MovedSongs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Songs that were copied: path of the song's main file → the copy's path.</summary>
+    public Dictionary<string, string> CopiedSongs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Summary of the last run, for the caller's status line.</summary>
     public string? Summary { get; private set; }
@@ -232,10 +235,15 @@ internal sealed class OrganizeForm : Form
                         if (result.Succeeded)
                         {
                             ok++;
+                            var newPath = result.Files.FirstOrDefault(f => string.Equals(f.Source, song.Path, StringComparison.OrdinalIgnoreCase))?.Destination;
                             if (job.Action == RelocateAction.Move)
                             {
-                                lock (MovedSongs) MovedSongs.Add(song.Path);
+                                if (newPath != null) lock (MovedSongs) MovedSongs[song.Path] = newPath;
                                 emptiedFolders.Add(song.Folder);
+                            }
+                            else if (newPath != null)
+                            {
+                                lock (CopiedSongs) CopiedSongs[song.Path] = newPath;
                             }
                         }
                         else if (result.Files.Any(f => f.Outcome == FileOutcome.Conflict)) conflicts++;

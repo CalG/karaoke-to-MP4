@@ -67,6 +67,12 @@ internal sealed class MainForm : Form
     private readonly ConcurrentQueue<SongHealth> _incoming = new();
     private readonly System.Windows.Forms.Timer _drainTimer = new() { Interval = 500 };
     private readonly Dictionary<SongHealthStatus, ItemSorter> _sorters = new();
+
+    /// <summary>
+    /// Items whose songs were moved (Organize) or modified (Fix). They stay listed, greyed out, but are
+    /// skipped by Fix and Organize until the next scan.
+    /// </summary>
+    private readonly HashSet<ListViewItem> _handled = new();
     private int _found;
     private int _checked;
 
@@ -211,9 +217,10 @@ internal sealed class MainForm : Form
         {
             // A list with a sorter re-sorts (and repaints) on every added item; sort once at the end instead.
             view.ListViewItemSorter = null;
-            view.Items.Clear();
+            view.Items.Clear();  // the only place results are cleared: a new scan (or restarting the program)
         }
         _details.Clear();
+        _handled.Clear();
         _found = 0;
         _checked = 0;
         UpdateTabTitles();
@@ -334,14 +341,22 @@ internal sealed class MainForm : Form
             ToolTipText = result.Path,
         };
 
-    private void AddResult(SongHealth result) => _views[result.Status].Items.Add(CreateItem(result));
+    /// <summary>Greys out an item whose song was moved or modified, and shows what happened.</summary>
+    private void MarkHandled(ListViewItem item, string outcome)
+    {
+        item.SubItems[2].Text = outcome;
+        item.ForeColor = SystemColors.GrayText;
+        item.Checked = false;
+        _handled.Add(item);
+        if (item.ListView?.SelectedItems.Contains(item) == true) ShowDetails(item.ListView);
+    }
 
     // ---------------- repairing ----------------
 
     private async Task FixAsync(bool onlyChecked)
     {
         var view = _views[SongHealthStatus.Repairable];
-        var items = view.Items.Cast<ListViewItem>().Where(i => !onlyChecked || i.Checked).ToList();
+        var items = view.Items.Cast<ListViewItem>().Where(i => !_handled.Contains(i) && (!onlyChecked || i.Checked)).ToList();
         if (items.Count == 0)
         {
             SetStatus(onlyChecked ? "Tick the songs you want to fix first." : "There is nothing to fix.");
@@ -372,27 +387,36 @@ internal sealed class MainForm : Form
                 var before = (SongHealth)item.Tag!;
                 SetStatus($"Fixing {before.FileName}...");
 
-                IReadOnlyList<SongHealth> results;
+                // The song stays in this list (only Scan clears the lists). Once its files have been changed it
+                // is greyed out and shows the outcome.
                 try
                 {
                     // Usually one result; a zip holding several songs is split into one zip per song.
                     var after = await Task.Run(() => SongHealthChecker.RepairAll(before.Path, keepBackups));
-                    bool split = after.Count > 1;
-                    results = after.Select(r => r.Status == SongHealthStatus.NoIssues
-                        ? r with { Summary = (split ? $"Split from {before.FileName}. " : "Repaired. ") + r.Summary }
-                        : r).ToList();
+                    string outcome;
+                    if (after.Count > 1)
+                    {
+                        outcome = $"Split into {after.Count} files: " + string.Join(", ", after.Select(r => r.FileName)) +
+                                  (after.All(r => r.Status == SongHealthStatus.NoIssues) ? "" :
+                                      " (" + string.Join("; ", after.Where(r => r.Status != SongHealthStatus.NoIssues).Select(r => $"{r.FileName}: {r.Summary}")) + ")");
+                    }
+                    else
+                    {
+                        outcome = after[0].Status == SongHealthStatus.NoIssues
+                            ? "Repaired - " + after[0].Summary
+                            : $"Repair attempted, now: {after[0].Summary}";
+                        item.Tag = after[0];
+                    }
                     if (after.All(r => r.Status != SongHealthStatus.Repairable)) repaired++; else failed++;
+                    MarkHandled(item, outcome);
                 }
                 catch (Exception ex)
                 {
                     failed++;
-                    results = new[] { before with { Summary = "Repair failed: " + ex.Message } };
+                    item.SubItems[2].Text = "Repair failed (nothing changed): " + ex.Message;
+                    item.Checked = false;
                 }
-
-                view.Items.Remove(item);
-                foreach (var r in results) AddResult(r);
                 _progress.Value++;
-                UpdateTabTitles();
             }
         }
         finally
@@ -410,9 +434,12 @@ internal sealed class MainForm : Form
 
     private void Organize()
     {
+        // Songs moved by an earlier Organize stay in the lists (greyed out) but aren't offered again.
         var songs = Lists.ToDictionary(
             l => l.Status,
-            l => (IReadOnlyList<SongHealth>)_views[l.Status].Items.Cast<ListViewItem>().Select(i => (SongHealth)i.Tag!).ToList());
+            l => (IReadOnlyList<SongHealth>)_views[l.Status].Items.Cast<ListViewItem>()
+                .Where(i => !_handled.Contains(i))
+                .Select(i => (SongHealth)i.Tag!).ToList());
         if (songs.Values.All(l => l.Count == 0))
         {
             SetStatus("Scan first: there are no songs to organize.");
@@ -426,14 +453,32 @@ internal sealed class MainForm : Form
 
         if (dialog.MovedSongs.Count > 0)
         {
+            // Keep moved songs in their lists (only Scan clears the lists), marked with where they went.
             foreach (var view in _views.Values)
             {
                 view.BeginUpdate();
-                foreach (var item in view.Items.Cast<ListViewItem>().Where(i => dialog.MovedSongs.Contains(((SongHealth)i.Tag!).Path)).ToList())
-                    view.Items.Remove(item);
+                foreach (ListViewItem item in view.Items)
+                {
+                    var song = (SongHealth)item.Tag!;
+                    if (!dialog.MovedSongs.TryGetValue(song.Path, out var newPath)) continue;
+                    var moved = song with { Path = newPath };
+                    item.Tag = moved;
+                    item.SubItems[3].Text = moved.Folder;
+                    item.ToolTipText = newPath;
+                    MarkHandled(item, "Moved to " + moved.Folder + " - " + song.Summary);
+                }
                 view.EndUpdate();
             }
-            UpdateTabTitles();
+        }
+        foreach (var view in _views.Values)
+        {
+            foreach (ListViewItem item in view.Items)
+            {
+                // Copies leave the original untouched, so the song stays active; just note where the copy went.
+                var song = (SongHealth)item.Tag!;
+                if (dialog.CopiedSongs.TryGetValue(song.Path, out var copy) && !item.SubItems[2].Text.StartsWith("Copied to"))
+                    item.SubItems[2].Text = $"Copied to {Path.GetDirectoryName(copy)} - {item.SubItems[2].Text}";
+            }
         }
         if (dialog.Summary != null) SetStatus(dialog.Summary);
     }
