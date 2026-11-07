@@ -20,9 +20,10 @@ public class SongHealthCheckerTests
         for (int k = 0; k < symbols; k++) cdg[packet * 24 + positions[k]] ^= 0x15;
     }
 
-    private static string Pair(TempDir dir, string name, byte[] cdg, int audioBytes = 100)
+    /// <summary>A .cdg plus an MP3 of the same length (2 s), or an empty MP3 when audioBytes is 0.</summary>
+    private static string Pair(TempDir dir, string name, byte[] cdg, int audioBytes = -1)
     {
-        File.WriteAllBytes(dir.File(name + ".mp3"), new byte[audioBytes]);
+        File.WriteAllBytes(dir.File(name + ".mp3"), audioBytes < 0 ? Mp3InspectorTests.Mp3(2) : new byte[audioBytes]);
         return TestFiles.WriteTemp(dir.Path, name + ".cdg", cdg);
     }
 
@@ -138,7 +139,7 @@ public class SongHealthCheckerTests
         var zipPath = dir.File("bundle.zip");
         using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
         {
-            using (var s = zip.CreateEntry("Song.mp3").Open()) s.Write(new byte[100]);
+            using (var s = zip.CreateEntry("Song.mp3").Open()) s.Write(Mp3InspectorTests.Mp3(2));
             using (var s = zip.CreateEntry("Song.cdg").Open()) s.Write(cdg);
         }
 

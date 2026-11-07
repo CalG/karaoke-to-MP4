@@ -281,7 +281,11 @@ dotnet run --project samples/KaraokeToMp4.WinForms
 2. **Scan** checks every song and sorts it into six tabs:
    * **No issues detected**
    * **Bad but repairable**, e.g. a scratched-disc CDG whose damaged packets the error-correction data
-     can fix, or a MIDI/KAR file with malformed bytes that can be cleaned up.
+     can fix, or a MIDI/KAR file with malformed bytes that can be cleaned up. When a CDG's graphics are
+     damaged, its MP3 is checked too (frames intact, same length as the graphics). A CDG with a few
+     packets beyond repair (at most 2% of its graphics; `SongHealthChecker.MaxUnrepairableShare`) is still
+     *partly repairable* if its MP3 is intact: Fix repairs what it can and leaves the rest blank.
+     **If the MP3 is damaged too, the song goes to Cannot repair.**
    * **Cannot repair**, e.g. a file that was cut off (part of the song is missing), an empty or unreadable file.
    * **Only music**: an MP3 (or other audio file) without a matching .cdg (missing lyrics), an empty .cdg,
      a .zip with audio but no .cdg, or a plain MIDI file with no lyrics.

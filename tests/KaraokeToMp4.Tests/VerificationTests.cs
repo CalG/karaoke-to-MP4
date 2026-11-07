@@ -142,3 +142,100 @@ public class CannotVerifyTests
         Assert.Equal(SongHealthStatus.NoIssues, SongHealthChecker.Check(Pair(dir, cdg, new byte[100])).Status);
     }
 }
+
+/// <summary>
+/// Scratched-disc rips (or drives that read the CD+G subcode badly): damaged graphics are only worth
+/// repairing when the audio is intact.
+/// </summary>
+public class PartlyRepairableTests
+{
+    /// <summary>A 60 s .cdg with error-correction data and a tile drawn every 0.1 s (about 600 graphics packets).</summary>
+    private static byte[] Cdg()
+    {
+        var data = TestFiles.SimpleCdg(60);
+        for (int p = 3; p < 60 * 300; p += 30)
+        {
+            var tile = TestFiles.Tile(0, 1, 4, 5, 0x2A);
+            tile.CopyTo(data, p * 24);
+        }
+        for (int i = 0; i < data.Length; i += 24) KaraokeToMp4.Cdg.CdgParity.ComputeParity(data.AsSpan(i, 24));
+        return data;
+    }
+
+    private static void Damage(byte[] cdg, IEnumerable<int> packets, int symbols)
+    {
+        int[] positions = { 5, 9, 13, 17, 21 };
+        foreach (var p in packets)
+            for (int k = 0; k < symbols; k++) cdg[p * 24 + positions[k]] ^= 0x15;
+    }
+
+    private static string Pair(TempDir dir, byte[] cdg, byte[] mp3)
+    {
+        File.WriteAllBytes(dir.File("Song.mp3"), mp3);
+        return TestFiles.WriteTemp(dir.Path, "Song.cdg", cdg);
+    }
+
+    [Fact]
+    public void FewUnrepairablePackets_GoodAudio_IsRepairable_AndFixLeavesThemBlank()
+    {
+        using var dir = new TempDir();
+        var cdg = Cdg();
+        Damage(cdg, Enumerable.Range(0, 40).Select(i => 3 + i * 30), 1);  // 40 repairable
+        Damage(cdg, new[] { 2403, 4803 }, 4);                              // 2 beyond repair (<2%)
+        var path = Pair(dir, cdg, Mp3InspectorTests.Mp3(60));
+
+        var health = SongHealthChecker.Check(path);
+        Assert.Equal(SongHealthStatus.Repairable, health.Status);
+        Assert.StartsWith("Partly repairable", health.Summary);
+
+        Assert.Equal(SongHealthStatus.NoIssues, SongHealthChecker.Repair(path).Status);
+        var fixedCdg = File.ReadAllBytes(path);
+        Assert.All(fixedCdg.AsSpan(2403 * 24, 24).ToArray(), b => Assert.Equal(0, b)); // left blank
+        Assert.True(File.Exists(path + ".bak"));
+    }
+
+    [Fact]
+    public void DamagedGraphics_AndDamagedAudio_CannotRepair()
+    {
+        using var dir = new TempDir();
+        var cdg = Cdg();
+        Damage(cdg, new[] { 33, 63 }, 1); // even fully repairable graphics...
+        var mp3 = Mp3InspectorTests.Mp3(60);
+        var junk = Enumerable.Repeat((byte)0x55, 30_000).ToArray();
+        var brokenMp3 = mp3[..(417 * 800)].Concat(junk).Concat(mp3[(417 * 800)..]).ToArray();
+
+        var health = SongHealthChecker.Check(Pair(dir, cdg, brokenMp3)); // ...with damaged audio is not worth fixing
+        Assert.Equal(SongHealthStatus.CannotRepair, health.Status);
+        Assert.Contains("audio is damaged too", health.Summary);
+    }
+
+    [Fact]
+    public void DamagedGraphics_AndCutOffAudio_CannotRepair()
+    {
+        using var dir = new TempDir();
+        var cdg = Cdg();
+        Damage(cdg, new[] { 33 }, 1);
+        var health = SongHealthChecker.Check(Pair(dir, cdg, Mp3InspectorTests.Mp3(30)));
+        Assert.Equal(SongHealthStatus.CannotRepair, health.Status);
+        Assert.Contains("cut off", health.Summary);
+    }
+
+    [Fact]
+    public void TooManyUnrepairablePackets_CannotRepair()
+    {
+        using var dir = new TempDir();
+        var cdg = Cdg();
+        Damage(cdg, Enumerable.Range(0, 60).Select(i => 3 + i * 30), 4); // ~10% of the graphics lost
+        var health = SongHealthChecker.Check(Pair(dir, cdg, Mp3InspectorTests.Mp3(60)));
+        Assert.Equal(SongHealthStatus.CannotRepair, health.Status);
+        Assert.Contains("too damaged to repair", health.Summary);
+    }
+
+    [Fact]
+    public void UndamagedGraphics_DoNotReadTheAudio()
+    {
+        using var dir = new TempDir();
+        // A placeholder "MP3" is never looked at when the graphics are fine (keeps scans fast).
+        Assert.Equal(SongHealthStatus.NoIssues, SongHealthChecker.Check(Pair(dir, Cdg(), new byte[10])).Status);
+    }
+}

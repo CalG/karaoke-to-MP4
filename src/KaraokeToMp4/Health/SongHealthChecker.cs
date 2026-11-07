@@ -278,22 +278,76 @@ public static class SongHealthChecker
 
         if (!report.HasParity) return CheckWithoutParity(path, kind, report, details, loadAudio);
 
-        SongHealthStatus status;
-        if (report.Unrepairable > 0) status = SongHealthStatus.CannotRepair;
-        else if (report.Repairable > 0 || report.TrailingBytes > 0) status = SongHealthStatus.Repairable;
-        else status = SongHealthStatus.NoIssues;
-
-        var summary = status switch
+        bool graphicsDamaged = report.Repairable > 0 || report.Unrepairable > 0;
+        if (!graphicsDamaged)
         {
-            SongHealthStatus.CannotRepair =>
-                $"{report.Unrepairable} graphics packet{(report.Unrepairable == 1 ? " is" : "s are")} too damaged to repair" +
-                (report.Repairable > 0 ? $" ({report.Repairable} others repairable)" : "") + ".",
-            SongHealthStatus.Repairable =>
-                (report.Repairable > 0 ? $"{report.Repairable} damaged graphics packet{(report.Repairable == 1 ? "" : "s")} (all repairable)" : "File ends mid-packet") +
-                (report.Repairable > 0 && report.TrailingBytes > 0 ? "; file ends mid-packet" : "") + ".",
-            _ => report.Summary,
-        };
-        return new SongHealth(path, kind, status, summary, details);
+            return report.TrailingBytes > 0
+                ? new SongHealth(path, kind, SongHealthStatus.Repairable, "File ends mid-packet.", details)
+                : new SongHealth(path, kind, SongHealthStatus.NoIssues, report.Summary, details);
+        }
+
+        // The disc was damaged (scratches, or a drive that reads the CD+G subcode badly): check the audio too.
+        int damagedPackets = report.Repairable + report.Unrepairable;
+        var audioProblems = CheckAudio(report, details, loadAudio);
+        if (audioProblems.Count > 0)
+            return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
+                $"{damagedPackets:N0} damaged graphics packets, and the audio is damaged too: " + string.Join("; ", audioProblems) + ".", details);
+
+        if (report.Unrepairable == 0)
+            return new SongHealth(path, kind, SongHealthStatus.Repairable,
+                $"{report.Repairable:N0} damaged graphics packet{(report.Repairable == 1 ? "" : "s")} (all repairable)" +
+                (report.TrailingBytes > 0 ? "; file ends mid-packet" : "") + ".", details);
+
+        // Some packets are beyond repair. If they are only a small share, the repaired song is still usable:
+        // the lost packets are left blank (small gaps in the graphics).
+        double lost = (double)report.Unrepairable / Math.Max(1, report.GraphicsPackets + report.Unrepairable);
+        details.Add($"{report.Unrepairable:N0} of {report.GraphicsPackets + report.Unrepairable:N0} graphics packets can't be repaired ({lost:P1}).");
+        if (lost <= MaxUnrepairableShare)
+            return new SongHealth(path, kind, SongHealthStatus.Repairable,
+                $"Partly repairable: {report.Repairable:N0} damaged graphics packets can be repaired; {report.Unrepairable:N0} ({lost:P1}) can't " +
+                "and will be left blank (small gaps in the graphics). The audio is intact.", details);
+        return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
+            $"{report.Unrepairable:N0} graphics packets ({lost:P1}) are too damaged to repair" +
+            (report.Repairable > 0 ? $" ({report.Repairable:N0} others repairable)" : "") + ".", details);
+    }
+
+    /// <summary>
+    /// Largest share of a .cdg's graphics packets that may be beyond repair for the song to still count as
+    /// "Bad but repairable" (the lost packets are left blank). Default 2%.
+    /// </summary>
+    public static double MaxUnrepairableShare { get; set; } = 0.02;
+
+    /// <summary>
+    /// Checks the song's audio: MP3 frames intact, and the same length as the graphics. Adds a detail line
+    /// and returns the problems found (empty when the audio is fine or isn't an MP3, which can't be checked).
+    /// </summary>
+    private static List<string> CheckAudio(CdgReport report, List<string> details, Func<(string Name, byte[] Data)> loadAudio)
+    {
+        var problems = new List<string>();
+        var (audioName, audio) = loadAudio();
+        if (!audioName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
+        {
+            details.Add($"Audio ({System.IO.Path.GetExtension(audioName)}) not checked: only MP3 audio can be checked.");
+            return problems;
+        }
+
+        var mp3 = Audio.Mp3Inspector.Inspect(audio);
+        details.Add($"MP3: {mp3.Frames:N0} frames, {mp3.Duration:m\\:ss\\.f}" +
+                    (mp3.DamagedBytes > 0 ? $", {mp3.DamagedBytes:N0} bytes outside valid frames" : ""));
+        if (mp3.Problem != null)
+        {
+            problems.Add("MP3: " + mp3.Problem);
+            return problems;
+        }
+
+        var diff = report.Duration - mp3.Duration;
+        if (diff.Duration() > LengthTolerance(report.Duration > mp3.Duration ? report.Duration : mp3.Duration))
+        {
+            problems.Add(diff > TimeSpan.Zero
+                ? $"the MP3 is {diff.TotalSeconds:F0} s shorter than the graphics ({mp3.Duration:m\\:ss} vs {report.Duration:m\\:ss}): the audio is probably cut off"
+                : $"the graphics are {(-diff).TotalSeconds:F0} s shorter than the MP3 ({report.Duration:m\\:ss} vs {mp3.Duration:m\\:ss}): the .cdg is probably cut off");
+        }
+        return problems;
     }
 
     /// <summary>Allowed difference between the .cdg and MP3 lengths before one of them counts as cut off.</summary>
@@ -317,31 +371,7 @@ public static class SongHealthChecker
             problems.Add($"{report.OffScreenTiles:N0} graphics tile{(report.OffScreenTiles == 1 ? "" : "s")} drawn off-screen");
 
         // 2. Audio: every MP3 frame present and intact, and the same length as the graphics.
-        var (audioName, audio) = loadAudio();
-        if (audioName.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
-        {
-            var mp3 = Audio.Mp3Inspector.Inspect(audio);
-            details.Add($"MP3: {mp3.Frames:N0} frames, {mp3.Duration:m\\:ss\\.f}" +
-                        (mp3.DamagedBytes > 0 ? $", {mp3.DamagedBytes:N0} bytes outside valid frames" : ""));
-            if (mp3.Problem != null)
-            {
-                problems.Add("MP3: " + mp3.Problem);
-            }
-            else
-            {
-                var diff = report.Duration - mp3.Duration;
-                if (diff.Duration() > LengthTolerance(report.Duration > mp3.Duration ? report.Duration : mp3.Duration))
-                {
-                    problems.Add(diff > TimeSpan.Zero
-                        ? $"the MP3 is {diff.TotalSeconds:F0} s shorter than the graphics ({mp3.Duration:m\\:ss} vs {report.Duration:m\\:ss}): the audio is probably cut off"
-                        : $"the graphics are {(-diff).TotalSeconds:F0} s shorter than the MP3 ({report.Duration:m\\:ss} vs {mp3.Duration:m\\:ss}): the .cdg is probably cut off");
-                }
-            }
-        }
-        else
-        {
-            details.Add($"Audio ({System.IO.Path.GetExtension(audioName)}) not checked: only MP3 audio can be checked.");
-        }
+        problems.AddRange(CheckAudio(report, details, loadAudio));
 
         if (problems.Count > 0)
             return new SongHealth(path, kind, SongHealthStatus.CannotRepair,
